@@ -53,5 +53,6 @@ Headers:
 ## 补充说明
 
 - 智谱套餐窗口：每 5 小时（动态刷新）+ 每 7 天（周）
+- ⚠️ **勘误（2026-08-27 一期开发确认）**：`nextResetTime` 是**毫秒时间戳**（非 ISO 字符串），前端需转 Date；CC Switch 实际还依赖 `limits[].unit` 字段归类（3=5小时 / 6=周），纯看 type 会把周口窗口排错序 → 适配器做双轨兼容（TIME_LIMIT→5h，TOKENS_LIMIT 按 unit 归类，兜底分配）
 - 团队套餐 key 与个人 key 独立
 - 其他官方文档：https://docs.bigmodel.cn/cn/coding-plan/

@@ -1,29 +1,43 @@
 # MiniMax 套餐用量查询
 
-> 状态：🟢 实锤（CC Switch v3.16.2 已适配，新余额接口返回剩余百分比）
-> 归档日期：2026-08-27
+> 状态：🟢 实锤（已从 CC Switch 源码确认全部细节，2026-08-27 一期开发时验证）
+> 归档日期：2026-08-27（更新）
 
-## 接口
+## 接口（已确认）
 
-CC Switch v3.16.2 release notes：
-> "适配 MiniMax Coding Plan 配额的新余额接口（新接口返回**剩余百分比**字段，而非旧解析器依赖的用量计数），过滤掉非编程模型（如视频），兼容无周限额的套餐"
+```
+GET https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains
+# 国际版：https://api.minimax.io/v1/api/openplatform/coding_plan/remains
+Headers:
+  Authorization: Bearer <API_KEY>
+```
 
-- 端点：**开发时从 CC Switch 源码提取确认**（`src-tauri/src/services/balance.rs` 的 MiniMax 分支）
-- 参考：MiniMax 开放平台 `https://api.minimaxi.com` 方向
+## 响应结构（已确认）
 
-## 已知信息
+```json
+{
+  "base_resp": { "status_code": 0, "status_msg": "success" },
+  "model_remains": [
+    {
+      "model_name": "general",        // 取 general（过滤 video 等非编程模型）
+      "current_interval_remaining_percent": 95,   // 剩余%！需反转为已用
+      "current_weekly_status": 1,     // 1=有周窗口；3=无周限额不展示
+      "end_time": 1787000000000       // 重置时间（毫秒时间戳）
+    }
+  ]
+}
+```
 
-- 新接口直接返回**剩余百分比**
-- 需要过滤非编程模型（如视频生成模型）
-- 部分套餐可能没有周限额 → adapter 需处理缺失窗口
+## 解析要点（CC Switch 源码确认）
 
-## 待确认（开发时）
-
-- [ ] 精确端点路径
-- [ ] 请求头/参数格式
-- [ ] 响应字段名
+- 业务错误判断：`base_resp.status_code != 0`
+- **只取 `model_remains[]` 中 `model_name == "general"` 的条目**（过滤 video 等）
+- `current_interval_remaining_percent` 是**剩余百分比**（需反转为已用：used = 100 - remaining）
+- 5 小时窗口重置时间：`end_time`（毫秒时间戳）
+- 周窗口：仅当 `current_weekly_status == 1` 时存在；`3` = 无周限额，不展示
+- 兼容无周限额套餐（缺失周窗口时只显示 5h 窗口）
 
 ## 来源
 
+- CC Switch 源码 `src-tauri/src/services/coding_plan.rs`（一期开发时克隆确认）
 - CC Switch v3.16.2 Release Notes (#3518)
-- 本地 mmx-cli skill（MiniMax 相关，可能有线索）

@@ -1,0 +1,43 @@
+{
+  "status": "success",
+  "task_id": "2026-08-27-plan-dashboard-phase1",
+  "files_created": [
+    "src/requirements.txt",
+    "src/backend/__init__.py",
+    "src/backend/models.py",
+    "src/backend/config.py",
+    "src/backend/store.py",
+    "src/backend/scheduler.py",
+    "src/backend/main.py",
+    "src/backend/adapters/__init__.py",
+    "src/backend/adapters/base.py",
+    "src/backend/adapters/zhipu.py",
+    "src/backend/adapters/minimax.py",
+    "src/backend/adapters/deepseek.py",
+    "src/backend/adapters/kimi.py",
+    "src/backend/adapters/ark.py",
+    "src/backend/adapters/manual.py",
+    "src/frontend/index.html",
+    "src/tests/conftest.py",
+    "src/tests/helpers.py",
+    "src/tests/test_adapters.py",
+    "src/tests/test_api.py",
+    "src/tests/test_config_store.py",
+    "pytest.ini",
+    "result.json"
+  ],
+  "files_modified": [
+    "README.md"
+  ],
+  "validation": {
+    "tests_passed": true,
+    "tests_summary": "48 passed, 0 failed（python -m pytest src/tests，全 mock，零真实网络请求）",
+    "app_starts": true,
+    "app_start_cmd": "python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8712",
+    "api_plans_structure_ok": true,
+    "frontend_served": true,
+    "key_sanitization_checked": true
+  },
+  "notes": "实现说明：\n1. 后端 FastAPI 仅监听 127.0.0.1，四个 API 路由 + 后台线程定时刷新（间隔可配、下限 1 分钟），启动即首刷一次；UsageStore 缓存最近结果且逐条目独立容错。\n2. 六个适配器严格按 docs/architecture.md 契约实现：fetch(entry) -> PlanUsage，绝不抛异常，percentage 统一为已用%（冗余 remaining 字段供前端直读）。\n3. MiniMax 接口按 brief 要求从 CC Switch 源码确认（src-tauri/src/services/coding_plan.rs）：GET api.minimaxi.com/v1/api/openplatform/coding_plan/remains（国际版 api.minimax.io），Bearer 认证；base_resp.status_code!=0 为业务错误；只取 model_remains[] 里 model_name=general（过滤 video）；current_interval_remaining_percent 为剩余%已反转为已用%；周窗口仅 current_weekly_status==1 时展示（3=无周限额）；重置时间为毫秒时间戳。\n4. 智谱补充了 CC Switch 实测细节：TIME_LIMIT→5小时窗口，TOKENS_LIMIT 按 limits[].unit 字段归类（3=5h，6/缺省=周），兼容 CREDIT_LIMIT 与大小写变体。Z.ai 通过 extra.host=https://api.z.ai 复用同实现；团队版支持 Bigmodel-Organization/Bigmodel-Project header。\n5. 火山方舟 V4 签名为纯 stdlib 实现（hmac/hashlib，免装庞大官方 SDK）；日粒度用量聚合为今日/本周/本月三窗口对比 extra.plan_quota 手填配额。\n6. 安全：API Key 只存 config.json（已在 .gitignore），GET /api/config 脱敏返回 has_key 布尔；POST /api/config 中 Key 留空 = 保留原值（防止前端回显把 Key 冲掉）；响应与日志均不含明文 Key（有测试断言保障）。\n7. 前端单页 index.html 无构建步骤：SVG stroke-dasharray 环形进度、颜色分级（>50 绿 / 20-50 黄 / <20 红）、重置倒计时（Xd Xh / Xh Xm / Xm 格式，同 CC Switch）、余额型卡片、手动标记、配置面板增删改条目 + 手动窗口编辑器、深色中文界面。\n\n遗留问题：\n1. 方舟接口为官方 OpenAPI 但 GetUsageDetails 的实际响应字段（Result.Details 结构）未经真实凭证验证——测试基于文档档案 mock；首次真机使用时建议先用小 lookback_days 试跑。\n2. 火山方舟仅能拿到日粒度用量，无法精确还原 5 小时滚动窗，「近1天」窗口是近似口径，卡片 raw.aggregated 里有原始数值可核对。\n3. Kimi/DeepSeek 等余额型未做过期提醒（manual.md 里提到的手动数据 staleness 提醒留待二期）。\n4. Windows 终端 GBK 代码页下日志中文显示乱码（文件内容均为 UTF-8 正常），不影响功能。\n\n文档勘误（依 brief 要求在此指出，未擅自偏离架构契约）：\n1. docs/research/providers/zhipu.md 称 nextResetTime 用于倒计时但未说明单位——经 CC Switch 源码确认为毫秒时间戳（非 ISO 字符串）。\n2. zhipu.md 以 TIME_LIMIT/TOKENS_LIMIT 区分 5 小时/周窗口；CC Switch 实际还依赖 limits[].unit（3=5h/6=周）归类 TOKENS_LIMIT 条目，纯按 type 会把两个周口径条目排错序。已做双轨兼容：TIME_LIMIT→5h，TOKENS_LIMIT 按 unit 归类。\n3. docs/research/providers/minimax.md 的「待确认」三项（端点/请求头/响应字段）本次已全部从 CC Switch 源码确认并写入适配器 docstring，可直接更新该档案。\n4. 架构文档的适配器目录里有独立的 adapters/zai.py，brief 一期清单里无此文件（zhipu host 可配置覆盖）。按 brief 实现：zai 作为 zhipu 条目的 extra.host 变体，PROVIDER_META 中注明，不单设文件。\n\n下一步建议：\n1. 真实 Key 试跑智谱/MiniMax/Kimi/DeepSeek 四家（社区验证过的接口，风险低），再试方舟 AK/SK。\n2. 把本 result.json notes 第 3 点的 MiniMax 确认结果回填 docs/research/providers/minimax.md，消除「待确认」。 \n3. 二期接入阿里百炼/腾讯云等探索型厂商时按 docs/new-provider-checklist.md 走适配器插件流程即可，核心零改动。",
+  "generated_at": "2026-08-27T11:35:00+00:00"
+}

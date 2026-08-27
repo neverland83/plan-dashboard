@@ -13,7 +13,65 @@
 
 ## 快速开始
 
-（一期开发完成后补全）
+### 1. 安装依赖
+
+要求 Python 3.10+（本机 3.14 验证通过）：
+
+```powershell
+pip install -r src/requirements.txt
+```
+
+包含：`fastapi` / `uvicorn` / `httpx` / `pydantic`（火山 AK/SK 签名为纯标准库实现，无额外依赖）。
+
+### 2. 准备配置
+
+复制模板并填入自己的 API Key：
+
+```powershell
+copy config.example.json config.json
+notepad config.json
+```
+
+- 把各条目的 `api_key` 换成真实 Key（`config.json` 已在 `.gitignore` 中排除，不会入库）
+- 火山方舟需要在 `extra` 里填 `access_key` / `secret_key` / `plan_quota`（套餐总配额，Tokens）
+- 手动型条目在 `extra.windows` 里直接填窗口名 + 已用百分比
+- 不想启用的条目设 `"enabled": false`
+
+也可以启动后在前端「⚙ 配置」面板里增删改条目（面板不回显已保存的 Key）。
+
+### 3. 启动服务
+
+```powershell
+python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8712
+```
+
+> ⚠️ 仅监听 `127.0.0.1`，不要改成 `0.0.0.0` —— API Key 安全依赖这一点。
+
+打开浏览器访问 <http://127.0.0.1:8712/> 即可看到看板。
+
+### 4. 使用
+
+- 卡片显示每个厂商的各窗口剩余百分比（环形图：绿 >50% / 黄 20–50% / 红 <20%）+ 重置倒计时
+- 余额型厂商（DeepSeek/Kimi）显示余额金额与可用状态；手动型卡片带「手动」标记
+- 右上角「↻ 刷新」立即重新拉取；后端每 `refresh_interval_minutes`（默认 30 分钟）自动拉取，前端每分钟轮询展示层
+
+### API 一览
+
+| 路由 | 说明 |
+|---|---|
+| `GET /api/plans` | 所有启用条目的用量数据（含错误态） |
+| `POST /api/refresh` | 手动触发全量刷新 |
+| `GET /api/config` | 读取配置（脱敏，不含 Key） |
+| `POST /api/config` | 保存配置（Key 留空 = 保留原值） |
+| `GET /api/providers` | 支持的厂商类型清单 |
+
+### 运行测试
+
+```powershell
+python -m pytest src/tests
+```
+
+全部测试使用 mock 响应，**不会发起任何真实网络请求**。
 
 ## 项目文档索引
 
