@@ -1,0 +1,33 @@
+{
+  "refresh_interval_minutes": 30,
+  "providers": [
+    {
+      "id": "zhipu",
+      "name": "智谱 GLM Coding",
+      "type": "zhipu",
+      "api_key": "PASTE_YOUR_KEY",
+      "extra": {},
+      "enabled": true
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "type": "deepseek",
+      "api_key": "PASTE_YOUR_KEY",
+      "extra": {},
+      "enabled": true
+    },
+    {
+      "id": "tencent-manual",
+      "name": "腾讯云（手动）",
+      "type": "manual",
+      "api_key": "",
+      "extra": {
+        "windows": [
+          { "name": "本月", "percentage": 50 }
+        ]
+      },
+      "enabled": false
+    }
+  ]
+}
