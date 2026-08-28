@@ -8,7 +8,9 @@ from backend.adapters.minimax import MiniMaxAdapter
 from backend.adapters.deepseek import DeepSeekAdapter
 from backend.adapters.kimi import KimiAdapter
 from backend.adapters.manual import ManualAdapter
+from backend.adapters.stepfun import StepFunAdapter
 from backend.adapters.ark import ArkAdapter, sign_v4
+from backend.adapters.bailian import BailianAdapter
 
 
 # ────────────────────────────── zhipu ──────────────────────────────
@@ -243,61 +245,353 @@ class TestManual:
 
 # ────────────────────────────── ark ──────────────────────────────
 class TestArk:
-    def _details(self):
-        from datetime import date, timedelta
-        today = __import__("datetime").date.today()
-        monday = today - timedelta(days=today.weekday())
-        month_first = today.replace(day=1)
-        return [
-            {"Time": str(today), "Usage": 1000.0, "Unit": "Tokens"},
-            {"Time": str(monday), "Usage": 2000.0, "Unit": "Tokens"},     # 本周
-            {"Time": str(month_first), "Usage": 3000.0, "Unit": "Tokens"},  # 本月
-        ]
+    """二期重写后的 ark：sign_v4 新签名 + GetAFPUsage/GetCodingPlanUsage 自动探测。"""
 
-    def test_quota_required(self):
-        u = ArkAdapter().fetch({
-            "id": "ark", "name": "方舟", "api_key": "AK",
-            "extra": {"secret_key": "SK"},      # 缺 plan_quota
-        })
-        assert u.error is not None and "plan_quota" in u.error
+    AFP_OK = {
+        "ResponseMetadata": {"Action": "GetAFPUsage", "Service": "ark"},
+        "Result": {
+            "PlanType": "Pro",
+            "AFPFiveHour": {"Quota": 10000, "Used": 2500, "ResetTime": 1790000000},
+            "AFPWeekly": {"Quota": 50000, "Used": 10000, "ResetTime": 1790500000},
+            "AFPMonthly": {"Quota": 200000, "Used": 50000, "ResetTime": 1791000000},
+        },
+    }
+    AFP_NOT_SUBSCRIBED = {
+        "ResponseMetadata": {"Action": "GetAFPUsage"},
+        "Result": {
+            "PlanType": "",
+            "AFPFiveHour": {"Quota": 0, "Used": 0, "ResetTime": 0},
+            "AFPWeekly": {"Quota": 0, "Used": 0, "ResetTime": 0},
+            "AFPMonthly": {"Quota": 0, "Used": 0, "ResetTime": 0},
+        },
+    }
+    CODING_OK = {
+        "ResponseMetadata": {"Action": "GetCodingPlanUsage"},
+        "Result": {
+            "Status": "Active",
+            "QuotaUsage": [
+                {"Level": "session", "Percent": 12.5, "ResetTime": 1790000000},
+                {"Level": "weekly", "Percent": 40, "ResetTime": 1790500000},
+                {"Level": "monthly", "Percent": 8, "ResetTime": 1791000000},
+            ],
+        },
+    }
+    CODING_RECLAIMED = {
+        "ResponseMetadata": {"Action": "GetCodingPlanUsage"},
+        "Result": {"Status": "Reclaimed", "UpdateTimestamp": 1787887081, "HasReward": False},
+    }
 
-    def test_missing_secret(self):
-        u = ArkAdapter().fetch({
-            "id": "ark", "name": "方舟", "api_key": "AK", "extra": {"plan_quota": 10000},
-        })
-        assert u.error is not None and "access_key" in u.error.lower() or "凭证" in u.error
+    ENTRY = {"id": "ark", "name": "方舟", "type": "ark",
+             "api_key": "AKTEST", "extra": {"secret_key": "SKTEST", "region": "cn-beijing"}}
 
-    def test_aggregates_usage(self, mock_http):
-        resp = {"Result": {"Details": self._details()}}
-        mock_http({"Action=GetUsageDetails": (200, resp)})
-        u = ArkAdapter().fetch({
-            "id": "ark", "name": "方舟", "api_key": "my-access-key",
-            "extra": {"secret_key": "sk", "plan_quota": 100000},
-        })
-        assert u.error is None
-        raw_agg = u.raw.get("aggregated", {})
-        assert raw_agg["used_week"] == 3000.0     # 今天(1000) + 周一(2000)
-        assert raw_agg["used_month"] == 6000.0
-        assert u.windows[1].name == "周"
-        assert abs(u.windows[1].percentage - 3.0) < 0.01   # 3000/100000*100
-
-    def test_signature_headers_present(self):
+    def test_signature_headers_new_canonical(self):
+        """新签名：固定顺序 canonical headers、SK 不加 AWS4 前缀、body 为空。"""
         from datetime import datetime, timezone
         headers = sign_v4(
             access_key="AKTEST", secret_key="SKTEST", region="cn-beijing",
-            host="ark.cn-beijing.volcengineapi.com", action="GetUsageDetails",
-            version="2024-01-01", body_json="{}",
-            now=datetime(2026, 8, 27, tzinfo=timezone.utc),
+            host="open.volcengineapi.com", action="GetAFPUsage",
+            version="2024-01-01",
+            now=datetime(2026, 8, 28, tzinfo=timezone.utc),
         )
         assert headers["Authorization"].startswith("HMAC-SHA256 Credential=AKTEST/")
         assert "cn-beijing/ark/request" in headers["Authorization"]
-        assert headers["X-Date"] == "20260827T000000Z"
+        assert "SignedHeaders=host;x-date;x-content-sha256;content-type" in headers["Authorization"]
+        assert headers["X-Date"] == "20260828T000000Z"
+        # body 为空 → x-content-sha256 是空串摘要
+        import hashlib
+        assert headers["X-Content-Sha256"] == hashlib.sha256(b"").hexdigest()
+
+    def test_afp_usage_parsed(self, mock_http):
+        """GetAFPUsage：绝对额度换算已用百分比，Quota>0 才出窗口。"""
+        mock_http({"Action=GetAFPUsage": (200, dict(self.AFP_OK))})
+        u = ArkAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None
+        assert u.plan_name == "Agent Plan Pro"
+        assert [w.name for w in u.windows] == ["5小时", "周", "本月"]
+        # 已用% = used/quota*100
+        assert abs(u.windows[0].percentage - 25.0) < 0.01
+        assert abs(u.windows[1].percentage - 20.0) < 0.01
+        assert abs(u.windows[2].percentage - 25.0) < 0.01
+        assert u.windows[0].remaining == 75.0
+        assert u.windows[0].next_reset is not None   # 秒级时间戳已转 ISO
+        assert u.raw["action"] == "GetAFPUsage"
+
+    def test_afp_zero_quota_skipped_falls_to_coding_plan(self, mock_http):
+        """AFP 全部 Quota<=0 → 探测落到 GetCodingPlanUsage。"""
+        mock_http({
+            "Action=GetAFPUsage": (200, dict(self.AFP_NOT_SUBSCRIBED)),
+            "Action=GetCodingPlanUsage": (200, dict(self.CODING_OK)),
+        })
+        u = ArkAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None
+        assert u.plan_name == "Coding Plan"
+        assert [w.name for w in u.windows] == ["5小时", "周", "本月"]
+        assert u.windows[0].percentage == 12.5       # Percent 已是已用口径，无需反转
+        assert u.windows[1].remaining == 60.0
+        assert u.raw["action"] == "GetCodingPlanUsage"
+
+    def test_no_plan_returns_status_not_error(self, mock_http):
+        """两探测皆空（未订阅/已回收）→ 照实显示状态文案，不置 error。"""
+        mock_http({
+            "Action=GetAFPUsage": (200, dict(self.AFP_NOT_SUBSCRIBED)),
+            "Action=GetCodingPlanUsage": (200, dict(self.CODING_RECLAIMED)),
+        })
+        u = ArkAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None                       # 无套餐≠出错
+        assert "无有效套餐" in u.plan_name
+        assert "Reclaimed" in u.plan_name
+        assert u.windows == []
+
+    def test_auth_error_code_terminates_probe(self, mock_http):
+        """业务错误码命中 _AUTH_ERROR_CODES → 认证失败且不再二次探测。"""
+        bad = {"ResponseMetadata": {"Error": {
+            "Code": "SignatureDoesNotMatch", "Message": "签名不匹配"}}}
+        mock_http({"Action=GetAFPUsage": (200, bad)})
+        u = ArkAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None
+        assert "认证失败" in u.error and "SignatureDoesNotMatch" in u.error
+        assert u.windows == []
+
+    def test_http_403_auth_failure(self, mock_http):
+        mock_http({"Action=GetAFPUsage": (403, {"ResponseMetadata": {}})})
+        u = ArkAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None and "认证失败" in u.error
+
+    def test_missing_credentials_is_error(self):
+        # 有 api_key 但缺 SK → 适配器报凭证缺失
+        u = ArkAdapter().fetch({"id": "ark", "name": "方舟", "api_key": "AK", "extra": {}})
+        assert u.error is not None and "凭证" in u.error and u.windows == []
+        # api_key 为空 → 基类先拦截（两种文案都不属于成功态）
+        u2 = ArkAdapter().fetch({"id": "ark", "name": "方舟", "api_key": "",
+                                 "extra": {"secret_key": "SK"}})
+        assert u2.error is not None and u2.windows == []
+
+    def test_field_alias_compat_coding_plan(self, mock_http):
+        """_parse_coding_plan_tiers 字段兼容：Usages/别名键/绝对额度兜底。"""
+        body = {"Result": {"Status": "Active", "Usages": [
+            {"Type": "5h", "UsedPercent": 30.0},                        # 别名 Level→Type、Percent→UsedPercent
+            {"Period": "Monthly", "Percentage": 66.0},                  # 别名 Period/Percentage
+            {"Name": "Weekly", "Quota": 200.0, "Used": 50.0},           # 绝对额度兜底换算
+            {"Level": "UnknownLevel", "Percent": 10.0},                 # 未知层级 → 跳过
+            "garbage",                                                   # 非法元素 → 跳过
+        ]}}
+        mock_http({
+            "Action=GetAFPUsage": (200, dict(self.AFP_NOT_SUBSCRIBED)),
+            "Action=GetCodingPlanUsage": (200, body),
+        })
+        u = ArkAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None
+        assert [(w.name, w.percentage) for w in u.windows] == [
+            ("5小时", 30.0), ("本月", 66.0), ("周", 25.0),
+        ]
+
+    def test_single_probe_failure_still_falls_through(self, mock_http):
+        """AFP 接口 500（非认证类）→ 不终止，继续探测 Coding Plan。"""
+        mock_http({
+            "Action=GetAFPUsage": (500, {"ResponseMetadata": {"Error": {
+                "Code": "InternalError", "Message": "boom"}}}),
+            "Action=GetCodingPlanUsage": (200, dict(self.CODING_OK)),
+        })
+        u = ArkAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None                       # 后续探测成功则清掉前次错误
+        assert u.plan_name == "Coding Plan" and len(u.windows) == 3
+
+
+# ────────────────────────────── stepfun ──────────────────────────────
+class TestStepFun:
+    BODY = {
+        "object": "account",
+        "type": "prepaid",
+        "balance": -0.07,
+        "total_cash_balance": 0,
+        "total_voucher_balance": 0,
+    }
+
+    def test_ok_balance(self, mock_http):
+        mock_http({"api.stepfun.com/v1/accounts": (200, dict(self.BODY))})
+        u = StepFunAdapter().fetch({
+            "id": "sf", "name": "StepFun", "type": "stepfun",
+            "api_key": "k", "extra": {},
+        })
+        assert u.error is None
+        assert u.balance["total"] == -0.07
+        assert u.balance["topped_up"] == 0.0
+        assert u.balance["voucher"] == 0.0
+        assert u.balance["currency"] == "CNY"
+        assert u.windows == []
+        assert u.plan_name == "Step Plan（控制台查看）"
+
+    def test_manual_credits_merged_as_windows(self, mock_http):
+        """extra.manual_credits 合并为窗口；remaining=剩余% → 反转为已用%。"""
+        mock_http({"api.stepfun.com/v1/accounts": (200, dict(self.BODY))})
+        u = StepFunAdapter().fetch({
+            "id": "sf", "name": "StepFun", "api_key": "k",
+            "extra": {"manual_credits": [
+                {"name": "加油包", "remaining": 45},
+                {"name": "月池", "percentage": 20, "next_reset": "2026-09-01T00:00:00+00:00"},
+                "garbage",                                  # 非法元素跳过
+                {"remaining": "bad"},                       # 无 name/数值 → 跳过
+            ]},
+        })
+        assert u.error is None
+        assert u.balance["total"] == -0.07                  # 余额照常解析
+        assert [w.name for w in u.windows] == ["加油包", "月池"]
+        assert u.windows[0].percentage == 55.0 and u.windows[0].remaining == 45.0
+        assert u.windows[1].percentage == 20.0
+        assert u.windows[1].next_reset == "2026-09-01T00:00:00+00:00"
+
+    def test_manual_credits_accepts_json_string(self, mock_http):
+        """配置面板文本框存的是字符串 → 兼容 JSON 数组字符串。"""
+        mock_http({"api.stepfun.com/v1/accounts": (200, dict(self.BODY))})
+        u = StepFunAdapter().fetch({
+            "id": "sf", "name": "StepFun", "api_key": "k",
+            "extra": {"manual_credits": '[{"name":"加油包","remaining":45}]'},
+        })
+        assert u.error is None
+        assert u.windows[0].name == "加油包" and u.windows[0].percentage == 55.0
+
+    def test_auth_failure(self, mock_http):
+        mock_http({"api.stepfun.com/v1/accounts": (401, {"error": "invalid key"})})
+        u = StepFunAdapter().fetch({"id": "sf", "name": "StepFun", "api_key": "bad", "extra": {}})
+        assert u.error is not None
+        assert "认证失败" in u.error and "401" in u.error
+
+    def test_garbage_response_no_raise(self, mock_http):
+        """垃圾响应（非 JSON / 非对象）→ 返回错误态，绝不抛异常。"""
+        for status, payload in ((200, "-not-json-"), (200, ["a", "list"])):
+            mock_http({"api.stepfun.com/v1/accounts": (status, payload)})
+            u = StepFunAdapter().fetch({"id": "sf", "name": "StepFun", "api_key": "k", "extra": {}})
+            assert u.error is not None
+            assert u.balance is None
+
+
+# ────────────────────────────── bailian ──────────────────────────────
+class TestBailian:
+    """经 subprocess 调本机 bl CLI 查询 Token Plan 配额（全部 mock，不真调 CLI）。"""
+
+    OK_JSON = '{"per1WeekPercentage": 0.8936928449999999, "per1WeekResetTime": 1788145140000}'
+
+    @staticmethod
+    def _proc(stdout="", stderr="", returncode=0):
+        from types import SimpleNamespace
+        return SimpleNamespace(stdout=stdout, stderr=stderr, returncode=returncode)
+
+    @pytest.fixture()
+    def mock_bl(self, monkeypatch):
+        """替换 shutil.which + subprocess.run，记录调用参数并可编程返回。"""
+        calls = {}
+        holder = {"result": self._proc()}
+
+        def fake_run(cmd, **kwargs):
+            calls["cmd"] = cmd
+            calls["kwargs"] = kwargs
+            return holder["result"]
+
+        monkeypatch.setattr("backend.adapters.bailian.shutil.which", lambda name: "bl")
+        monkeypatch.setattr("backend.adapters.bailian.subprocess.run", fake_run)
+        holder["calls"] = calls
+        return holder
+
+    ENTRY = {"id": "bl1", "name": "百炼", "type": "bailian", "api_key": "", "extra": {}}
+
+    def test_ok_week_window(self, mock_bl):
+        """正常：比例 0-1 → 已用百分比；毫秒时间戳 → ISO；无 5h 窗口。"""
+        mock_bl["result"] = self._proc(stdout=self.OK_JSON)
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None
+        assert u.provider == "bailian"
+        assert u.display_name == "百炼"
+        assert [w.name for w in u.windows] == ["周"]
+        assert abs(u.windows[0].percentage - 89.3692845) < 0.01   # 已用口径
+        assert abs(u.windows[0].remaining - 10.6) < 0.1           # remaining = 100 - used
+        # 1788145140000 ms → 2026-08-31T02:59:00+00:00（UTC）
+        assert u.windows[0].next_reset == "2026-08-31T02:59:00+00:00"
+        assert u.raw == {"per1WeekPercentage": 0.8936928449999999,
+                         "per1WeekResetTime": 1788145140000}
+        # 调用参数核对：--output json、capture_output、utf-8
+        assert mock_bl["calls"]["cmd"][0].endswith("bl")
+        assert mock_bl["calls"]["cmd"][1:] == ["usage", "token-plan", "--output", "json"]
+        assert mock_bl["calls"]["kwargs"]["capture_output"] is True
+        assert mock_bl["calls"]["kwargs"]["encoding"] == "utf-8"
+
+    def test_zero_and_full_boundaries(self, mock_bl):
+        mock_bl["result"] = self._proc(
+            stdout='{"per1WeekPercentage": 0, "per1WeekResetTime": 1788145140000}')
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None and u.windows[0].percentage == 0.0
+
+        mock_bl["result"] = self._proc(
+            stdout='{"per1WeekPercentage": 1, "per1WeekResetTime": 1788145140000}')
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None
+        assert u.windows[0].percentage == 100.0 and u.windows[0].remaining == 0.0
+
+    def test_missing_reset_time_still_ok(self, mock_bl):
+        """缺 reset 字段 → 窗口照出，reset 为 None。"""
+        mock_bl["result"] = self._proc(stdout='{"per1WeekPercentage": 0.5}')
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None
+        assert u.windows[0].percentage == 50.0
+        assert u.windows[0].next_reset is None
+
+    def test_nonzero_return_code_is_error(self, mock_bl):
+        mock_bl["result"] = self._proc(
+            stdout="token expired", stderr="bl: auth failed, run `bl auth login`",
+            returncode=1)
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None
+        assert "退出码 1" in u.error and "auth failed" in u.error
+        assert u.windows == []
+
+    def test_invalid_json_is_error(self, mock_bl):
+        mock_bl["result"] = self._proc(stdout="<table>usage</table>", returncode=0)
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None
+        assert "JSON" in u.error
+        assert u.windows == []
+
+    def test_missing_percentage_field_is_error(self, mock_bl):
+        mock_bl["result"] = self._proc(stdout='{"unexpected": true}', returncode=0)
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None and "per1WeekPercentage" in u.error
+        assert u.windows == []
+
+    def test_bl_not_found_is_friendly_error(self, monkeypatch):
+        # which 解析不到（未安装）→ 友好错误
+        monkeypatch.setattr("backend.adapters.bailian.shutil.which", lambda name: None)
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None
+        assert "未找到 bl 命令" in u.error and "bailian-cli" in u.error
+        assert u.windows == []
+
+        def raise_fnf(cmd, **kwargs):
+            raise FileNotFoundError("bl")
+
+        # which 命中但执行瞬间消失 → 同样友好错误
+        monkeypatch.setattr("backend.adapters.bailian.shutil.which", lambda name: "bl")
+        monkeypatch.setattr("backend.adapters.bailian.subprocess.run", raise_fnf)
+        u2 = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u2.error is not None
+        assert "未找到 bl 命令" in u2.error
+
+    def test_timeout_is_error(self, monkeypatch):
+        import subprocess as sp
+
+        def raise_timeout(cmd, **kwargs):
+            raise sp.TimeoutExpired(cmd, 20)
+
+        monkeypatch.setattr("backend.adapters.bailian.shutil.which", lambda name: "bl")
+        monkeypatch.setattr("backend.adapters.bailian.subprocess.run", raise_timeout)
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None and "超时" in u.error
+        assert u.windows == []
 
 
 # ────────────────────────────── 通用契约 ──────────────────────────────
 class TestContract:
     @pytest.mark.parametrize("adapter_cls", [
-        ZhipuAdapter, MiniMaxAdapter, DeepSeekAdapter, KimiAdapter, ArkAdapter, ManualAdapter,
+        ZhipuAdapter, MiniMaxAdapter, DeepSeekAdapter, KimiAdapter, ArkAdapter,
+        StepFunAdapter, ManualAdapter, BailianAdapter,
     ])
     def test_adapter_never_raises_on_garbage_response(self, adapter_cls, monkeypatch):
         """契约：适配器收到垃圾响应不得抛异常，必须返回 error 态。"""
@@ -309,6 +603,13 @@ class TestContract:
             def __exit__(self, *e): return False
 
         monkeypatch.setattr("backend.adapters.base.httpx.Client", BoomClient)
+
+        # bailian 不走 httpx，把 subprocess.run 一并炸掉，验证同样不抛异常
+        def boom_run(*a, **kw):
+            raise RuntimeError("cli down")
+
+        monkeypatch.setattr("backend.adapters.bailian.subprocess.run", boom_run)
+
         entry = {"id": "x", "name": "X", "api_key": "k-or-empty", "extra": {}}
         if adapter_cls is ManualAdapter:
             entry["extra"] = {}

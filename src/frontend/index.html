@@ -263,8 +263,12 @@ function cardHTML(p) {
   let bodyHTML = "";
   if (p.error && !(p.balance)) {
     bodyHTML = `<div class="err-msg">✕ ${esc(p.error)}</div>`;
-  } else if (p.kind === "balance" && p.balance) {
+  } else if (p.kind === "balance" && p.balance && !(p.windows && p.windows.length)) {
+    // 纯余额型（DeepSeek/Kimi）：只渲染余额
     bodyHTML = balanceBlock(p) + (p.error ? `<div class="err-msg warn-text">⚠ ${esc(p.error)}</div>` : "");
+  } else if (p.balance && p.windows && p.windows.length) {
+    // 余额 + 手动窗口并存（如 StepFun：账户余额 + 加油包）
+    bodyHTML = balanceBlock(p) + `<div class="windows">${p.windows.map(windowBlock).join("")}</div>`;
   } else if (p.windows && p.windows.length) {
     bodyHTML = `<div class="windows">${p.windows.map(windowBlock).join("")}</div>`;
   } else {
