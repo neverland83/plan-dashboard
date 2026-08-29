@@ -7,3 +7,11 @@ backups/
 .venv/
 venv/
 *.log
+
+# 运行时产物（卡片详情模型/档级缓存）
+data/
+*.local.json
+*.tmp
+
+# Claude Agent 跑任务留下的 review 产物（不入库）
+result.json

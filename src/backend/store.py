@@ -86,6 +86,7 @@ class UsageStore:
                 while entry_id in self._cache:
                     entry_id += "x"
                 self._order.append(entry_id)
+            result["entry_id"] = entry_id     # 前端卡片排序以此为稳定身份（config 条目 id）
             self._cache[entry_id] = result
         return result
 

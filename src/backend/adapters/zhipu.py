@@ -23,6 +23,7 @@ from ..models import PlanUsage, UsageWindow
 
 DEFAULT_HOST = "https://open.bigmodel.cn"
 QUOTA_PATH = "/api/monitor/usage/quota/limit"
+MODELS_PATH = "/api/paas/v4/models"
 
 LEVEL_NAMES = {"lite": "GLM Coding Lite", "pro": "GLM Coding Pro", "max": "GLM Coding Max"}
 
@@ -123,3 +124,50 @@ class ZhipuAdapter(BaseAdapter):
         except (TypeError, ValueError):
             return None
         return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat(timespec="seconds")
+
+    # ---- 卡片详情扩展 -----------------------------------------------------
+    def fetch_models(self, api_key: str, extra: dict) -> list[str]:
+        """GET {host}/api/paas/v4/models（OpenAI 兼容，Bearer 认证；含 Z.ai 变体）。
+
+        智谱 key 认证特殊（裸 key 无 Bearer）仅限管控面 quota 接口；
+        paas/v4 推理面为标准 Bearer。失败返回 []。
+        """
+        host = (extra.get("host") or DEFAULT_HOST).rstrip("/")
+        return self._fetch_models_openai_compat(f"{host}{MODELS_PATH}", api_key)
+
+    def fetch_plan_name(self, api_key: str, extra: dict) -> str | None:
+        """复用 quota/limit 响应里的 data.level → 'GLM Coding Lite/Pro/Max'。
+
+        与 _fetch 同 URL 同 header；任何失败（无 key/网络/结构异常）返回 None。
+        """
+        if not (api_key or "").strip():
+            return None
+        host = (extra.get("host") or DEFAULT_HOST).rstrip("/")
+        url = f"{host}{QUOTA_PATH}"
+        headers = {
+            "Authorization": api_key,
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en",
+        }
+        org = extra.get("team_organization_id")
+        project = extra.get("team_project_id")
+        if org:
+            headers["Bigmodel-Organization"] = str(org)
+        if project:
+            headers["Bigmodel-Project"] = str(project)
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(url, headers=headers)
+        except Exception:  # noqa: BLE001
+            return None
+        if resp.status_code >= 400:
+            return None
+        try:
+            body = resp.json()
+        except ValueError:
+            return None
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, dict):
+            return None
+        level = str(data.get("level") or "").lower()
+        return LEVEL_NAMES.get(level) or (level or None)

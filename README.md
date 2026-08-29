@@ -35,6 +35,7 @@ notepad config.json
 - 把各条目的 `api_key` 换成真实 Key（`config.json` 已在 `.gitignore` 中排除，不会入库）
 - 火山方舟需要在 `extra` 里填 `access_key` / `secret_key` / `plan_quota`（套餐总配额，Tokens）
 - 手动型条目在 `extra.windows` 里直接填窗口名 + 已用百分比
+- 可选：条目里加 `"plan_name": "..."` 手填套餐档级名（详情弹框在 adapter 无法自报档级时展示它）
 - 不想启用的条目设 `"enabled": false`
 
 也可以启动后在前端「⚙ 配置」面板里增删改条目（面板不回显已保存的 Key）。
@@ -53,7 +54,20 @@ python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8712
 
 - 卡片显示每个厂商的各窗口剩余百分比（环形图：绿 >50% / 黄 20–50% / 红 <20%）+ 重置倒计时
 - 余额型厂商（DeepSeek/Kimi）显示余额金额与可用状态；手动型卡片带「手动」标记
+- 卡片右下角「☰ 详情」打开卡片详情弹框（见下节）
 - 右上角「↻ 刷新」立即重新拉取；后端每 `refresh_interval_minutes`（默认 30 分钟）自动拉取，前端每分钟轮询展示层
+
+### 卡片详情（Plan 档级 + 模型列表）
+
+点击卡片右下角「☰ 详情」弹出只读弹框：
+
+- **当前套餐档级**（plan_name），按三层回退取值：adapter 自报 → config.json 手填 → 「按量调用 / 未知档级」；档级旁的徽标标注来源（`来自 adapter` / `手动配置`）
+- **该厂商支持的模型列表**，支持按模型名/ID 过滤搜索 + 滚动浏览
+- **上次刷新时间** + 弹框内「刷新 ↻」按钮（忽略缓存强制重查）
+
+缓存策略（**首查 → 缓存 → 手动刷新**）：首次打开弹框会查询一次厂商接口并把结果写入 `data/model_cache.json`；之后每次打开直接读缓存，不再发请求；需要最新数据时点弹框内「刷新」按钮。模型/档级缓存是运行时产物，已在 `.gitignore` 中排除。
+
+> 注：Step Plan（月池/加油包）官方无用量查询 API，StepFun 详情只有模型列表；DeepSeek/Kimi 按量计费无套餐档级，plan_name 显示「按量调用」。
 
 ### API 一览
 
@@ -64,6 +78,9 @@ python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8712
 | `GET /api/config` | 读取配置（脱敏，不含 Key） |
 | `POST /api/config` | 保存配置（Key 留空 = 保留原值） |
 | `GET /api/providers` | 支持的厂商类型清单 |
+| `GET /api/plans/{id}/info` | 卡片详情：Plan 档级 + 模型列表（无缓存 → 首查并写缓存；有缓存 → 直接返回） |
+| `POST /api/plans/{id}/refresh-info` | 卡片详情强制重查（忽略缓存，更新缓存后返回） |
+| `DELETE /api/plans/{id}/info` | 清空该条目的详情缓存（下次 GET 重新首查） |
 
 ### 运行测试
 

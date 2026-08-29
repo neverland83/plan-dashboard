@@ -26,6 +26,7 @@ from ..models import PlanUsage, UsageWindow
 HOST_CN = "https://api.minimaxi.com"
 HOST_INTL = "https://api.minimax.io"
 REMAINS_PATH = "/v1/api/openplatform/coding_plan/remains"
+MODELS_PATH = "/v1/models"          # OpenAI 兼容 List Models
 
 
 class MiniMaxAdapter(BaseAdapter):
@@ -105,3 +106,43 @@ class MiniMaxAdapter(BaseAdapter):
         except (TypeError, ValueError):
             return None
         return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat(timespec="seconds")
+
+    # ---- 卡片详情扩展 -----------------------------------------------------
+    def _host_for(self, extra: dict) -> str:
+        region = str(extra.get("region") or "cn").lower()
+        return HOST_INTL if region in ("intl", "en", "global") else HOST_CN
+
+    def fetch_models(self, api_key: str, extra: dict) -> list[str]:
+        """GET {host}/v1/models（OpenAI 兼容 List Models）。失败返回 []。"""
+        return self._fetch_models_openai_compat(
+            f"{self._host_for(extra)}{MODELS_PATH}", api_key)
+
+    def fetch_plan_name(self, api_key: str, extra: dict) -> str | None:
+        """MiniMax Coding Plan 只有 1 档：remains 查通即 'MiniMax Coding Plan'。
+
+        查不通（无 key/失败）返回 None，交给 config 手填回退。
+        """
+        if not (api_key or "").strip():
+            return None
+        url = f"{self._host_for(extra)}{REMAINS_PATH}"
+        headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(url, headers=headers)
+        except Exception:  # noqa: BLE001
+            return None
+        if resp.status_code >= 400:
+            return None
+        try:
+            body = resp.json()
+        except ValueError:
+            return None
+        base_resp = body.get("base_resp") or {}
+        if base_resp.get("status_code") not in (None, 0):
+            return None
+        remains = body.get("model_remains")
+        if isinstance(remains, list) and any(
+            isinstance(c, dict) and c.get("model_name") == "general" for c in remains
+        ):
+            return "MiniMax Coding Plan"
+        return None

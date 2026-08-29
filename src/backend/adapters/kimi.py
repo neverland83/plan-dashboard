@@ -15,6 +15,7 @@ from ..models import PlanUsage
 
 HOST_CN = "https://api.moonshot.cn"
 BALANCE_PATH = "/v1/users/me/balance"
+MODELS_PATH = "/v1/models"          # OpenAI 兼容 List Models
 
 
 class KimiAdapter(BaseAdapter):
@@ -58,3 +59,11 @@ class KimiAdapter(BaseAdapter):
             "cash": self._to_float(data.get("cash_balance"), 0.0),
         }
         return usage
+
+    # ---- 卡片详情扩展 -----------------------------------------------------
+    def fetch_models(self, api_key: str, extra: dict) -> list[str]:
+        """GET {host}/v1/models（OpenAI 兼容 List Models；CN/EN 变体同构）。失败返回 []。"""
+        host = (extra.get("host") or HOST_CN).rstrip("/")
+        return self._fetch_models_openai_compat(f"{host}{MODELS_PATH}", api_key)
+
+    # fetch_plan_name：Kimi 按量计费无套餐 → 继承基类返回 None

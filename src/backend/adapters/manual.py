@@ -17,6 +17,7 @@ class ManualAdapter(BaseAdapter):
     provider_id = "manual"
     display_name = "手动录入"
     needs_key = False
+    supports_models = False     # 手动型无模型列表查询能力（详情弹框显示空列表）
 
     def _fetch(self, api_key: str, extra: dict, usage: PlanUsage) -> PlanUsage:
         windows_cfg = extra.get("windows")

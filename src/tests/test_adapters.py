@@ -164,16 +164,27 @@ class TestMiniMax:
 
 
 # ────────────────────────────── deepseek ──────────────────────────────
-class TestDeepSeek:
-    BODY = {
-        "is_available": True,
-        "balance_infos": [{
-            "currency": "CNY",
-            "total_balance": "110.00",
-            "granted_balance": "10.00",
-            "topped_up_balance": "100.00",
-        }],
+def _ds_body(infos: list[dict]) -> dict:
+    """构造 DeepSeek /user/balance 响应体。"""
+    return {"is_available": True, "balance_infos": infos}
+
+
+def _ds_info(currency: str, total: str) -> dict:
+    return {
+        "currency": currency,
+        "total_balance": total,
+        "granted_balance": "0.00" if total == "0.00" else "10.00",
+        "topped_up_balance": "100.00",
     }
+
+
+class TestDeepSeek:
+    BODY = _ds_body([{
+        "currency": "CNY",
+        "total_balance": "110.00",
+        "granted_balance": "10.00",
+        "topped_up_balance": "100.00",
+    }])
 
     def test_ok_balance(self, mock_http):
         mock_http({"api.deepseek.com/user/balance": (200, dict(self.BODY))})
@@ -185,6 +196,10 @@ class TestDeepSeek:
         assert u.balance["currency"] == "CNY"
         assert u.balance["is_available"] is True
         assert u.windows == []
+        # 单币种：currencies 也照出（单条），兼容字段与主币种一致
+        assert u.balance["currencies"] == [{
+            "currency": "CNY", "total": 110.0, "granted": 10.0, "topped_up": 100.0,
+        }]
 
     def test_unavailable_flag_kept(self, mock_http):
         body = dict(self.BODY, is_available=False)
@@ -192,6 +207,84 @@ class TestDeepSeek:
         u = DeepSeekAdapter().fetch({"id": "ds", "name": "DS", "api_key": "k", "extra": {}})
         assert u.error is None              # 数据有效即可上板；不可用由前端提示
         assert u.balance["is_available"] is False
+
+    # ---- balance_infos 多币种：全量解析进 currencies，顺序不稳定需稳定排序 ----
+    def test_multi_currency_usd_zero_first_all_shown(self, mock_http):
+        """用例 A：实测顺序 USD(0) 在前 → 两币种都返回，CNY 为主币种排首位。"""
+        mock_http({"user/balance": (200, _ds_body([
+            _ds_info("USD", "0.00"), _ds_info("CNY", "10.00"),
+        ]))})
+        u = DeepSeekAdapter().fetch({"id": "ds", "name": "DS", "api_key": "k", "extra": {}})
+        assert u.error is None
+        # currencies 全量且有序：CNY(有余额) 在前
+        assert u.balance["currencies"] == [
+            {"currency": "CNY", "total": 10.0, "granted": 10.0, "topped_up": 100.0},
+            {"currency": "USD", "total": 0.0, "granted": 0.0, "topped_up": 100.0},
+        ]
+        # 兼容字段 = 主币种
+        assert u.balance["currency"] == "CNY"
+        assert u.balance["total"] == 10.0
+        assert u.balance["topped_up"] == 100.0
+
+    def test_multi_currency_cny_first_same_output(self, mock_http):
+        """用例 B：CNY(10) 在前 → 输出与 A 完全一致（排序无关输入顺序）。"""
+        mock_http({"user/balance": (200, _ds_body([
+            _ds_info("CNY", "10.00"), _ds_info("USD", "0.00"),
+        ]))})
+        u = DeepSeekAdapter().fetch({"id": "ds", "name": "DS", "api_key": "k", "extra": {}})
+        assert u.error is None
+        assert u.balance["currencies"] == [
+            {"currency": "CNY", "total": 10.0, "granted": 10.0, "topped_up": 100.0},
+            {"currency": "USD", "total": 0.0, "granted": 0.0, "topped_up": 100.0},
+        ]
+        assert u.balance["currency"] == "CNY"
+        assert u.balance["total"] == 10.0
+
+    def test_all_zero_prefers_cny_not_error(self, mock_http):
+        """用例 C：全为 0 → CNY 兜底为主币种（并列时 CNY 优先），不报错。"""
+        mock_http({"user/balance": (200, _ds_body([
+            _ds_info("USD", "0.00"), _ds_info("CNY", "0.00"),
+        ]))})
+        u = DeepSeekAdapter().fetch({"id": "ds", "name": "DS", "api_key": "k", "extra": {}})
+        assert u.error is None
+        assert u.balance["currency"] == "CNY"
+        assert u.balance["total"] == 0.0
+        assert [c["currency"] for c in u.balance["currencies"]] == ["CNY", "USD"]
+
+    def test_all_zero_without_cny_falls_back_to_first(self, mock_http):
+        """全 0 且无 CNY（如 EUR/USD）→ 按字母序兜底，不报错。"""
+        mock_http({"user/balance": (200, _ds_body([
+            _ds_info("USD", "0.00"), _ds_info("EUR", "0.00"),
+        ]))})
+        u = DeepSeekAdapter().fetch({"id": "ds", "name": "DS", "api_key": "k", "extra": {}})
+        assert u.error is None
+        assert u.balance["currency"] == "EUR"
+        assert u.balance["total"] == 0.0
+        assert [c["currency"] for c in u.balance["currencies"]] == ["EUR", "USD"]
+
+    def test_only_usd_has_balance_usd_is_main(self, mock_http):
+        """用例 D：海外用户仅 USD 有余额 → USD 为主币种排首位。"""
+        mock_http({"user/balance": (200, _ds_body([
+            _ds_info("CNY", "0.00"), _ds_info("USD", "5.50"),
+        ]))})
+        u = DeepSeekAdapter().fetch({"id": "ds", "name": "DS", "api_key": "k", "extra": {}})
+        assert u.error is None
+        assert u.balance["currency"] == "USD"
+        assert u.balance["total"] == 5.5
+        assert [c["currency"] for c in u.balance["currencies"]] == ["USD", "CNY"]
+
+    def test_non_dict_entries_skipped(self, mock_http):
+        """数组混入非法元素 → 跳过后仍全量解析剩余币种，绝不抛异常。"""
+        mock_http({"user/balance": (200, {
+            "is_available": True,
+            "balance_infos": ["garbage", _ds_info("USD", "0.00"), _ds_info("CNY", "8.00")],
+        })})
+        u = DeepSeekAdapter().fetch({"id": "ds", "name": "DS", "api_key": "k", "extra": {}})
+        assert u.error is None
+        assert [c["currency"] for c in u.balance["currencies"]] == ["CNY", "USD"]
+        assert u.balance["currencies"][0]["total"] == 8.0
+        assert u.balance["currency"] == "CNY"
+        assert u.balance["total"] == 8.0
 
 
 # ────────────────────────────── kimi ──────────────────────────────
@@ -478,14 +571,25 @@ class TestBailian:
 
     @pytest.fixture()
     def mock_bl(self, monkeypatch):
-        """替换 shutil.which + subprocess.run，记录调用参数并可编程返回。"""
-        calls = {}
-        holder = {"result": self._proc()}
+        """替换 shutil.which + subprocess.run，记录调用参数并可编程返回。
+
+        holder["result"] 支持两种形态：
+        - 单个 proc 对象 → 每次调用都返回它（向后兼容老的测试）
+        - [proc1, proc2, ...] → 序列返回（用于 retry 行为测试）
+        """
+        holder = {"result": self._proc(), "results_idx": 0}
+        calls = {"count": 0, "cmd": None, "kwargs": None}
 
         def fake_run(cmd, **kwargs):
+            calls["count"] += 1
             calls["cmd"] = cmd
             calls["kwargs"] = kwargs
-            return holder["result"]
+            result = holder["result"]
+            if isinstance(result, list):
+                idx = holder["results_idx"]
+                holder["results_idx"] = idx + 1
+                return result[idx] if idx < len(result) else result[-1]
+            return result
 
         monkeypatch.setattr("backend.adapters.bailian.shutil.which", lambda name: "bl")
         monkeypatch.setattr("backend.adapters.bailian.subprocess.run", fake_run)
@@ -584,6 +688,66 @@ class TestBailian:
         monkeypatch.setattr("backend.adapters.bailian.subprocess.run", raise_timeout)
         u = BailianAdapter().fetch(dict(self.ENTRY))
         assert u.error is not None and "超时" in u.error
+        assert u.windows == []
+
+    # ────────────────────────── OAuth transient 重试 ──────────────────────────
+    def _expired_proc(self):
+        """模拟 bl CLI 在 OAuth access_token 短过期时的 stdout/stderr/returncode。"""
+        return self._proc(
+            stdout="",
+            stderr='{"error":{"code":3,"message":"Console session is not logged in or has expired.","hint":"Run `bl auth login --console` to sign in or refresh your console session."}}',
+            returncode=3,
+        )
+
+    def _disable_sleep(self, monkeypatch):
+        """屏蔽真实 time.sleep，避免重试测试真的等 1.5 秒。"""
+        monkeypatch.setattr("backend.adapters.bailian.time.sleep", lambda _s: None)
+
+    def test_retry_on_expired_succeeds(self, mock_bl, monkeypatch):
+        """OAuth 短过期 → 第 2 次 retry 拿到 OK → windows 正常出。"""
+        self._disable_sleep(monkeypatch)
+        mock_bl["result"] = [self._expired_proc(), self._proc(stdout=self.OK_JSON)]
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is None
+        assert [w.name for w in u.windows] == ["周"]
+        assert abs(u.windows[0].percentage - 89.3692845) < 0.01
+        # 首次 expired + 1 次 retry = 共 2 次子进程调用
+        assert mock_bl["calls"]["count"] == 2
+
+    def test_retry_on_expired_exhausted_returns_error(self, mock_bl, monkeypatch):
+        """3 次都 expired → 用尽 2 次重试，最终报错。"""
+        self._disable_sleep(monkeypatch)
+        mock_bl["result"] = [self._expired_proc(), self._expired_proc(), self._expired_proc()]
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None
+        assert "退出码 3" in u.error
+        assert "Console session" in u.error
+        assert u.windows == []
+        # 首次 + 2 次 retry = 3 次
+        assert mock_bl["calls"]["count"] == 3
+
+    def test_non_expired_nonzero_return_code_no_retry(self, mock_bl, monkeypatch):
+        """非 expired 错误（普通子进程错误）→ 不重试，直接报错，避免被 retry 拖慢。"""
+        self._disable_sleep(monkeypatch)
+        mock_bl["result"] = self._proc(
+            stdout="unparseable junk", stderr="bl: command failed", returncode=1,
+        )
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None
+        assert "退出码 1" in u.error
+        assert u.windows == []
+        # 不该 retry → 只调 1 次
+        assert mock_bl["calls"]["count"] == 1
+
+    def test_retry_then_invalid_json_still_error(self, mock_bl, monkeypatch):
+        """expired 重试成功，但第二次的 stdout 不是合法 JSON → 走 JSON 错误路径。"""
+        self._disable_sleep(monkeypatch)
+        mock_bl["result"] = [
+            self._expired_proc(),
+            self._proc(stdout="<not json>", returncode=0),
+        ]
+        u = BailianAdapter().fetch(dict(self.ENTRY))
+        assert u.error is not None and "JSON" in u.error
         assert u.windows == []
 
 

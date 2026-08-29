@@ -6,6 +6,7 @@
       "name": "智谱 GLM Coding",
       "type": "zhipu",
       "api_key": "PASTE_YOUR_KEY",
+      "plan_name": "GLM Coding · Lite 档",
       "extra": {},
       "enabled": true
     },

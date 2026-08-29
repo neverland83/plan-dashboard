@@ -61,9 +61,42 @@
     display: flex; flex-direction: column; gap: 14px;
   }
   .card.error { border-color: rgba(224, 82, 82, .35); }
-  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .card-head { display: flex; justify-content: flex-start; align-items: flex-start; gap: 8px; }
+  .card-title-wrap { flex: 1; min-width: 0; }
+
+  /* ---- 卡片拖拽排序 ---- */
+  .drag-handle {
+    background: none; border: none; color: var(--text-dim);
+    cursor: grab; padding: 2px 5px; font-size: 14px; line-height: 1.4;
+    letter-spacing: -1px; border-radius: 6px;
+    flex: none; align-self: flex-start;
+    /* 触摸设备：手柄上禁用浏览器默认滚动/长按选择，保证 pointer events 可用 */
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  .drag-handle:hover { color: var(--accent); }
+  .drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .card.dragging {
+    /* 拖拽中：fixed 定位悬浮跟随指针，半透明 + 阴影突出 */
+    position: fixed; z-index: 100; margin: 0;
+    opacity: .5; pointer-events: none;
+    border-color: var(--accent);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+  }
+  .card.kb-grab {
+    /* 键盘抓取态：不悬浮，仅高亮轮廓标识"拎起" */
+    outline: 2px dashed var(--accent); outline-offset: 2px;
+  }
+  .drop-placeholder {
+    /* 落点指示：虚线框占位；pointer-events:none 让 hit-test 穿透到下方卡片 */
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius);
+    background: rgba(79, 140, 255, .07);
+    pointer-events: none;
+  }
   .card-title { font-size: 15px; font-weight: 600; }
   .card-sub { color: var(--text-dim); font-size: 12px; margin-top: 3px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  /* 拖拽动画：占位插入时其余卡片平滑位移（拖拽中禁用，避免悬浮卡片错位观感） */
+  .grid:not(.drag-active) .card { transition: transform .15s ease; }
   .badge {
     font-size: 10.5px; padding: 2px 7px; border-radius: 999px;
     border: 1px solid var(--border); color: var(--text-dim); white-space: nowrap;
@@ -95,17 +128,67 @@
   .balance-row { display: flex; justify-content: space-between; }
   .balance-row .k { color: var(--text-dim); }
   .balance-total { font-size: 20px; font-weight: 600; }
+  /* 多币种行：主币种高亮，其余次级弱化 */
+  .balance-main { font-weight: 600; }
+  .balance-alt { color: var(--text-dim); }
 
   .err-msg { color: var(--red); font-size: 12.5px; line-height: 1.5; word-break: break-all; }
   .ok-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); margin-right: 5px; }
   .bad-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--red); margin-right: 5px; }
   .warn-text { color: var(--yellow); }
 
-  /* 配置面板 */
+  /* ---- 卡片详情弹框（brief 2026-08-29：深色科技风） ---- */
+  .detail-btn {
+    background: none; border: none; color: var(--text-dim);
+    cursor: pointer; font-size: 15px; line-height: 1;
+    padding: 4px 7px; border-radius: 7px; flex: none;
+    transition: color .15s, border-color .15s;
+  }
+  .detail-btn:hover { color: var(--accent); background: rgba(79,140,255,.1); }
+  .detail-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .card-foot { display: flex; justify-content: flex-end; margin-top: -4px; }
+
+  #info-dialog { max-width: 720px; width: 70vw; min-width: 320px; }
+  .info-meta { display: grid; grid-template-columns: auto 1fr auto; gap: 10px 14px; align-items: center; }
+  .info-meta .k { color: var(--text-dim); font-size: 12.5px; }
+  .info-plan { font-size: 14.5px; font-weight: 600; }
+  .plan-source {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-dim); margin-left: 8px; vertical-align: 1px;
+  }
+  .plan-source.adapter { color: var(--green); border-color: rgba(63,185,111,.4); }
+  .plan-source.config { color: var(--yellow); border-color: rgba(224,166,58,.4); }
+  .info-count { color: var(--text-dim); font-size: 12px; margin: 12px 0 6px; }
+  .model-search { margin-bottom: 10px; }
+  .model-list {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    max-height: 42vh; overflow-y: auto;
+  }
+  .model-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 9px 14px; font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .model-row:last-child { border-bottom: none; }
+  .model-row:hover { background: rgba(79,140,255,.06); }
+  .model-id { font-family: Consolas, "Courier New", monospace; word-break: break-all; }
+  .model-owned { color: var(--text-dim); font-size: 11.5px; white-space: nowrap; margin-left: 12px; }
+  .model-empty { text-align: center; color: var(--text-dim); padding: 30px 0; font-size: 13px; }
+  .info-err { color: var(--red); font-size: 12.5px; }
+  @media (max-width: 720px) {
+    #info-dialog { width: 94vw; }
+    .model-list { max-height: 50vh; }
+  }
+
+  /* 配置面板 + 详情弹框：通用居中（防 UA 默认 absolute 撑出 viewport） */
   dialog {
     background: var(--bg-panel); color: var(--text);
     border: 1px solid var(--border); border-radius: var(--radius);
     max-width: 860px; width: 92vw; padding: 0;
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    margin: 0;
+    max-height: 85vh;
   }
   dialog::backdrop { background: rgba(0,0,0,.55); }
   .dlg-head, .dlg-foot {
@@ -152,6 +235,8 @@
 <main>
   <div class="grid" id="grid"><div class="empty">加载中…</div></div>
 </main>
+<!-- 拖拽操作播报区（屏幕阅读器） -->
+<div aria-live="polite" id="drag-live" class="meta" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap"></div>
 
 <!-- 配置面板 -->
 <dialog id="cfg-dialog">
@@ -168,13 +253,42 @@
   </div>
 </dialog>
 
+<!-- 卡片详情弹框（只读：Plan 档级 + 模型列表 + 手动刷新） -->
+<dialog id="info-dialog">
+  <div class="dlg-head">
+    <strong id="info-title">详情</strong>
+    <button class="detail-btn" id="btn-info-close-x" title="关闭" aria-label="关闭详情">✕</button>
+  </div>
+  <div class="dlg-body">
+    <div class="info-meta">
+      <span class="k">当前套餐</span>
+      <span><span class="info-plan" id="info-plan">--</span><span class="plan-source" id="info-plan-source"></span></span>
+      <span></span>
+      <span class="k">上次刷新</span>
+      <span class="meta" id="info-fetched-at">--</span>
+      <button id="btn-info-refresh" title="忽略缓存，重新查询厂商接口">刷新 ↻</button>
+    </div>
+    <div class="info-err" id="info-err" hidden></div>
+    <div class="info-count" id="info-count">共 0 个模型</div>
+    <div class="model-search">
+      <input type="text" id="info-search" placeholder="🔍 输入模型名/ID 过滤…" style="width:100%">
+    </div>
+    <div class="model-list" id="info-model-list"></div>
+  </div>
+  <div class="dlg-foot">
+    <button id="btn-info-close">关闭</button>
+  </div>
+</dialog>
+
 <script>
 "use strict";
 const API = {
-  plans:     () => "/api/plans",
-  refresh:   () => "/api/refresh",
-  config:    () => "/api/config",
-  providers: () => "/api/providers",
+  plans:       () => "/api/plans",
+  refresh:     () => "/api/refresh",
+  config:      () => "/api/config",
+  providers:   () => "/api/providers",
+  info:        id => `/api/plans/${encodeURIComponent(id)}/info`,
+  refreshInfo: id => `/api/plans/${encodeURIComponent(id)}/refresh-info`,
 };
 
 const PROVIDER_META = {};   // type -> meta
@@ -232,6 +346,9 @@ function windowBlock(w) {
   </div>`;
 }
 
+// 币种符号映射（多币种行展示用）
+const CURRENCY_SYMBOLS = { CNY: "¥", USD: "$", EUR: "€", GBP: "£", JPY: "¥", KRW: "₩" };
+
 function balanceBlock(p) {
   const b = p.balance || {};
   const fmt = v => (typeof v === "number" ? v.toFixed(2) : "--");
@@ -239,6 +356,27 @@ function balanceBlock(p) {
     ? `<div class="balance-row"><span class="k">账户可用</span>
          <span>${b.is_available ? '<span class="ok-dot"></span>可用' : '<span class="bad-dot"></span>不可用'}</span></div>`
     : "";
+
+  // 多币种（DeepSeek）：每币种一行，主币种在首位加粗高亮；
+  // 其余币种弱化展示。明细（赠金/充值）收进悬浮提示，保持卡片简洁。
+  if (Array.isArray(b.currencies) && b.currencies.length) {
+    const sym = c => CURRENCY_SYMBOLS[c] || "";
+    const curRows = b.currencies.map((c, i) => {
+      const cls = i === 0 ? "balance-main" : "balance-alt";
+      const tip = `赠金 ${fmt(c.granted)} · 充值 ${fmt(c.topped_up)}`;
+      const amount = i === 0
+        ? `<span class="balance-total" style="color:${pctColor(100)}">${fmt(c.total)}</span>`
+        : `<span>${fmt(c.total)}</span>`;
+      return `<div class="balance-row" title="${esc(tip)}">
+        <span class="${cls}">${esc(sym(c.currency))} ${esc(c.currency || "")}</span>${amount}</div>`;
+    }).join("");
+    return `
+  <div class="balance-box">
+    ${curRows}
+    ${availRow}
+  </div>`;
+  }
+
   return `
   <div class="balance-box">
     <div class="balance-row"><span class="balance-total" style="color:${pctColor(100)}">${fmt(b.total ?? b.available)}</span>
@@ -276,16 +414,430 @@ function cardHTML(p) {
   }
 
   return `
-  <div class="card ${p.error ? "error" : ""}">
+  <div class="card ${p.error ? "error" : ""}" data-entry-id="${esc(p.entry_id || p.provider)}">
     <div class="card-head">
-      <div>
+      <button class="drag-handle" title="拖动调整卡片顺序（或聚焦后按空格抓取、方向键移动）"
+        aria-label="调整「${esc(p.display_name)}」卡片顺序"
+        aria-grabbed="false" aria-keyshortcuts="Space Enter" tabindex="0">⠿</button>
+      <div class="card-title-wrap">
         <div class="card-title">${esc(p.display_name)}</div>
         <div class="card-sub">${subBits.join(" · ")}</div>
       </div>
       <div>${kindBadge}${badge}</div>
     </div>
     ${bodyHTML}
+    <div class="card-foot">
+      <button class="detail-btn" data-action="detail" data-entry-id="${esc(p.entry_id || p.provider)}"
+        title="查看套餐档级与支持的模型"
+        aria-label="查看「${esc(p.display_name)}」详情">☰ 详情</button>
+    </div>
   </div>`;
+}
+
+// ---------- 卡片顺序存储（localStorage 封装） ----------
+// 仅存 entry_id 数组；隐私模式/配额不足时静默降级，不影响看板功能
+const OrderStore = {
+  KEY: "plan-dashboard.cardOrder",
+  load() {
+    try {
+      const raw = localStorage.getItem(this.KEY);
+      if (raw === null) return null;                 // 无记录 → 用 config 原顺序
+      const val = JSON.parse(raw);
+      if (!Array.isArray(val)) return null;          // 结构不对 → 视为损坏
+      return val.filter(v => typeof v === "string"); // 混入非字符串一律剔除
+    } catch (e) {
+      return null;                                   // JSON 损坏 / localStorage 被禁 → 回退
+    }
+  },
+  save(order) {
+    try { localStorage.setItem(this.KEY, JSON.stringify(order)); }
+    catch (e) { /* 写失败不致命：顺序记忆失效，功能不受影响 */ }
+  },
+};
+
+// ==== [order-pure:begin] ====
+// ---------- 顺序解析纯函数（pytest 经 Node 直接加载本段做单测） ----------
+/** 卡片身份：优先 config 条目 id，缺失时退回适配器类型 id */
+function cardIdOf(p) { return String(p.entry_id || p.provider); }
+
+/**
+ * 合并「用户保存的顺序」与「config 当前条目」：
+ * - localStorage 里已不存在的 id（配置中删掉的条目）→ 剔除
+ * - config 新增的 id → 按 config 顺序追加到末尾
+ * - 保存顺序里的重复 id 只保留首个
+ * - 返回数组恒等于 configIds 的一个重排（不丢不多）
+ */
+function resolveCardOrder(savedOrder, configIds) {
+  const valid = new Set(configIds);
+  const kept = [];
+  const keptSet = new Set();
+  for (const id of savedOrder || []) {
+    if (valid.has(id) && !keptSet.has(id)) { kept.push(id); keptSet.add(id); }
+  }
+  const appended = configIds.filter(id => !keptSet.has(id));
+  return kept.concat(appended);
+}
+
+/** 按顺序表对 plans 排序；不在表内的兜底排末尾并保持原相对位置（稳定排序） */
+function sortPlansByOrder(plans, order) {
+  const indexOf = new Map(order.map((id, i) => [id, i]));
+  return plans
+    .map((p, i) => ({ p, i }))                    // 带原下标保证稳定
+    .sort((a, b) => {
+      const ia = indexOf.get(cardIdOf(a.p));
+      const ib = indexOf.get(cardIdOf(b.p));
+      if (ia === undefined && ib === undefined) return a.i - b.i;
+      if (ia === undefined) return 1;             // 无顺序信息 → 沉底
+      if (ib === undefined) return -1;
+      return ia - ib;
+    })
+    .map(x => x.p);
+}
+// ==== [order-pure:end] ====
+
+// ---------- 拖拽排序器（pointer events 统一鼠标/触摸 + 键盘可访问） ----------
+class DragSorter {
+  constructor() {
+    this.grid = null;
+    this.order = [];      // 当前生效顺序（entry_id 数组）
+    this.state = null;    // 拖拽会话（鼠标/触摸）；键盘拖拽见 kb
+    this.kb = null;       // 键盘拖拽会话
+    this._lastPlans = []; // 最近一次 plans（拖拽结束重渲染用）
+  }
+
+  /** 是否有进行中的拖拽（轮询渲染需让路，避免 DOM 被中途重建） */
+  isActive() { return this.state !== null || this.kb !== null; }
+
+  /** 渲染入口：应用持久化顺序，返回重排后的 plans 并记忆（供 drop 后重绘） */
+  applyOrder(plans) {
+    this._lastPlans = plans;
+    const configIds = plans.map(cardIdOf);
+    const saved = OrderStore.load();
+    const resolved = resolveCardOrder(saved, configIds);
+    if (JSON.stringify(resolved) !== JSON.stringify(saved || [])) {
+      // 配置增删过条目 → 把解析结果写回，保持存储内容与实际一致
+      OrderStore.save(resolved);
+    }
+    this.order = resolved;
+    return sortPlansByOrder(plans, resolved);
+  }
+
+  /** 每次渲染后调用：在（新建的）grid 上挂事件委托（事件挂在 grid 上，DOM 重建无需重挂） */
+  bind(grid) {
+    if (this.grid === grid) return;      // grid 本体不随轮询重建，只绑一次
+    this.grid = grid;
+    grid.addEventListener("pointerdown", ev => this._onPointerDown(ev));
+    grid.addEventListener("keydown", ev => this._onKeyDown(ev));
+    // 触摸长按可能弹出的系统菜单会打断拖拽，拖拽中屏蔽
+    grid.addEventListener("contextmenu", ev => {
+      if (this.isActive()) ev.preventDefault();
+    });
+  }
+
+  /** 从 DOM 实际顺序回收 entry_id 数组 */
+  _orderFromDOM() {
+    return [...this.grid.querySelectorAll(".card")].map(el => el.dataset.entryId);
+  }
+
+  _commit(order) {
+    this.order = order;
+    OrderStore.save(order);
+  }
+
+  // ---- 鼠标 / 触摸拖拽 -----------------------------------------------------
+  _onPointerDown(ev) {
+    const handle = ev.target.closest(".drag-handle");
+    if (!handle || !ev.isPrimary || ev.button !== 0) return;
+    const card = handle.closest(".card");
+    if (!card) return;
+    // 记录待启动会话，位移超过阈值才算真正开始拖拽（避免误伤普通点击）
+    this.state = {
+      handle, card,
+      startX: ev.clientX, startY: ev.clientY,
+      started: false,
+      rect: null, offsetX: 0, offsetY: 0,
+    };
+    window.addEventListener("pointermove", this._onPointerMove);
+    window.addEventListener("pointerup", this._onPointerUp);
+    window.addEventListener("pointercancel", this._onPointerUp);
+  }
+
+  _startDrag(ev) {
+    const st = this.state;
+    st.started = true;
+    const rect = st.card.getBoundingClientRect();
+    st.rect = rect;
+    st.offsetX = ev.clientX - rect.left;
+    st.offsetY = ev.clientY - rect.top;
+
+    // 占位元素：撑住网格布局，指示落点
+    const ph = document.createElement("div");
+    ph.className = "drop-placeholder";
+    ph.style.width = rect.width + "px";
+    ph.style.height = rect.height + "px";
+    this.grid.insertBefore(ph, st.card);
+
+    // 原卡片悬浮跟随指针
+    st.card.classList.add("dragging");
+    st.card.style.width = rect.width + "px";
+    st.card.style.height = rect.height + "px";
+    st.card.style.left = rect.left + "px";
+    st.card.style.top = rect.top + "px";
+    this.grid.classList.add("drag-active");
+    st.handle.setAttribute("aria-grabbed", "true");
+    st.handle.style.cursor = "grabbing";
+    document.body.style.cursor = "grabbing";
+    this._announce(`已抓取「${st.card.querySelector(".card-title").textContent}」，拖到目标位置后松开`);
+  }
+
+  _onPointerMove = (ev) => {
+    const st = this.state;
+    if (!st) return;
+    if (!st.started) {
+      if (Math.hypot(ev.clientX - st.startX, ev.clientY - st.startY) < 5) return;
+      this._startDrag(ev);
+    }
+    ev.preventDefault();   // 阻断触摸滚动（touch-action:none 之外的兜底）
+
+    // 悬浮卡片跟随
+    st.card.style.transform =
+      `translate(${ev.clientX - st.startX}px, ${ev.clientY - st.startY}px)`;
+
+    // hit-test：悬浮卡与占位均 pointer-events:none，取到的是真实卡片
+    const under = document.elementFromPoint(ev.clientX, ev.clientY);
+    const target = under && under.closest(".card");
+    const ph = this.grid.querySelector(".drop-placeholder");
+    if (!target || target === st.card || !ph) return;    // 空隙处保持上次落点
+
+    const r = target.getBoundingClientRect();
+    const before = ev.clientX < r.left + r.width / 2;    // 左半 → 插到前面
+    this.grid.insertBefore(ph, before ? target : target.nextSibling);
+  };
+
+  _onPointerUp = () => {
+    const st = this.state;
+    if (!st) return;
+    window.removeEventListener("pointermove", this._onPointerMove);
+    window.removeEventListener("pointerup", this._onPointerUp);
+    window.removeEventListener("pointercancel", this._onPointerUp);
+    this.state = null;
+    if (!st.started) return;                             // 未成拖拽 → 普通点击
+
+    const ph = this.grid.querySelector(".drop-placeholder");
+    if (ph) this.grid.insertBefore(st.card, ph), ph.remove();
+    st.card.classList.remove("dragging");
+    st.card.style.cssText = "";                          // 清除悬浮期的内联样式
+    this.grid.classList.remove("drag-active");
+    st.handle.setAttribute("aria-grabbed", "false");
+    st.handle.style.cursor = "";
+    document.body.style.cursor = "";
+    this._commit(this._orderFromDOM());
+    renderPlans(this._lastPlans);                        // 按新顺序完整重排一次
+    this._announce("顺序已保存");
+  };
+
+  // ---- 键盘拖拽（Space 抓取 → 方向键移动 → Space 放下 / Esc 取消） ------
+  _onKeyDown(ev) {
+    const handle = ev.target.closest ? ev.target.closest(".drag-handle") : null;
+    if (!handle) return;
+
+    if (!this.kb) {
+      if (ev.key !== " " && ev.key !== "Spacebar" && ev.key !== "Enter") return;
+      const card = handle.closest(".card");
+      if (!card) return;
+      ev.preventDefault();
+      this.kb = { handle, card, origin: this._orderFromDOM() };
+      handle.setAttribute("aria-grabbed", "true");
+      card.classList.add("kb-grab");
+      this._announce(`已抓取「${card.querySelector(".card-title").textContent}」，用方向键移动，空格放下，Esc 取消`);
+      return;
+    }
+
+    const { card } = this.kb;
+    const grid = this.grid;
+    const cards = () => [...grid.querySelectorAll(".card")];
+
+    if (ev.key === " " || ev.key === "Spacebar" || ev.key === "Enter") {
+      ev.preventDefault();
+      this._finishKb();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      // 取消：恢复抓取前的顺序
+      const origin = this.kb.origin;
+      const elById = new Map(cards().map(el => [el.dataset.entryId, el]));
+      origin.forEach(id => {
+        const el = elById.get(id);
+        if (el) grid.appendChild(el);                    // 依原顺序重新追加
+      });
+      this._abortKb();
+      this._announce("已取消，顺序未改变");
+    } else if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+      ev.preventDefault();
+      const sib = ev.key === "ArrowLeft"
+        ? card.previousElementSibling
+        : card.nextElementSibling;
+      if (!sib || !sib.classList.contains("card")) return;
+      grid.insertBefore(card, ev.key === "ArrowLeft" ? sib : sib.nextSibling);
+    } else if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
+      ev.preventDefault();
+      // 网格是多列布局：上下 = 按列数跳跃（由第一行卡片数推算）
+      const all = cards();
+      const firstTop = all[0].getBoundingClientRect().top;
+      const cols = Math.max(1, all.filter(el =>
+        el.getBoundingClientRect().top === firstTop).length);
+      const idx = all.indexOf(card);
+      const to = ev.key === "ArrowUp" ? idx - cols : idx + cols;
+      if (to < 0 || to >= all.length) return;
+      grid.insertBefore(card, ev.key === "ArrowDown" ? all[to].nextSibling : all[to]);
+    }
+  }
+
+  _finishKb() {
+    const { handle } = this.kb;
+    this.kb = null;
+    handle.setAttribute("aria-grabbed", "false");
+    handle.closest(".card").classList.remove("kb-grab");
+    this._commit(this._orderFromDOM());
+    this._announce("顺序已保存");
+  }
+
+  _abortKb() {
+    const { handle } = this.kb;
+    this.kb = null;
+    handle.setAttribute("aria-grabbed", "false");
+    handle.closest(".card").classList.remove("kb-grab");
+  }
+
+  /** 屏幕阅读器播报（视觉隐藏的 live region） */
+  _announce(msg) {
+    const live = document.getElementById("drag-live");
+    if (live) live.textContent = msg;
+  }
+}
+const dragSorter = new DragSorter();
+
+// ---------- 卡片详情弹框（首查→缓存→手动刷新；brief 2026-08-29） ----------
+const infoState = { entryId: null, models: [], planName: null, planSource: "none" };
+
+// plan_name 三层回退的后两层兜底文案（第一层 adapter 由后端完成）
+function planDisplayText(planName, source) {
+  if (planName) return { text: planName, source };
+  if (source === "config") return { text: "未知档级（配置未填）", source };
+  return { text: "按量调用 / 未知档级", source: "none" };
+}
+
+const SOURCE_LABELS = { adapter: "来自 adapter", config: "手动配置", none: "" };
+
+function filteredModels(query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return infoState.models;
+  return infoState.models.filter(m =>
+    String(m.id || "").toLowerCase().includes(q)
+    || String(m.owned_by || "").toLowerCase().includes(q));
+}
+
+function renderModelList() {
+  const list = document.getElementById("info-model-list");
+  const searchEl = document.getElementById("info-search");
+  const rows = filteredModels(searchEl ? searchEl.value : "");
+  document.getElementById("info-count").textContent =
+    `共支持 ${infoState.models.length} 个模型` +
+    (rows.length !== infoState.models.length ? `（过滤后 ${rows.length} 个）` : "");
+  if (!rows.length) {
+    list.innerHTML = `<div class="model-empty">${
+      infoState.models.length ? "无匹配的模型" : "暂无模型数据（可点「刷新」重查）"}</div>`;
+    return;
+  }
+  list.innerHTML = rows.map(m => `
+    <div class="model-row">
+      <span class="model-id">${esc(m.id)}</span>
+      <span class="model-owned">${esc(m.owned_by || "")}</span>
+    </div>`).join("");
+}
+
+function renderInfoModal(data) {
+  const plan = planDisplayText(data.plan_name, data.plan_name_source);
+  document.getElementById("info-title").textContent = data.display_name || "详情";
+  document.getElementById("info-plan").textContent = plan.text;
+  const srcEl = document.getElementById("info-plan-source");
+  srcEl.textContent = SOURCE_LABELS[plan.source] || "";
+  srcEl.className = `plan-source ${plan.source}`;
+  document.getElementById("info-fetched-at").textContent = data.fetched_at
+    ? "更新于 " + new Date(data.fetched_at).toLocaleString("zh-CN", { hour12: false })
+    : "从未刷新";
+  const errEl = document.getElementById("info-err");
+  if (data.error) { errEl.hidden = false; errEl.textContent = "⚠ " + data.error; }
+  else { errEl.hidden = true; errEl.textContent = ""; }
+  infoState.entryId = data.entry_id;
+  infoState.models = Array.isArray(data.models) ? data.models : [];
+  infoState.planName = data.plan_name;
+  infoState.planSource = data.plan_name_source;
+  const search = document.getElementById("info-search");
+  search.value = "";
+  renderModelList();
+}
+
+async function fetchInfo(entryId, force) {
+  const refreshBtn = document.getElementById("btn-info-refresh");
+  refreshBtn.disabled = true;
+  refreshBtn.textContent = "查询中…";
+  try {
+    const resp = await fetch(force ? API.refreshInfo(entryId) : API.info(entryId),
+      force ? { method: "POST" } : undefined);
+    const data = await resp.json();
+    if (!resp.ok || data.detail) {
+      renderInfoModal({ entry_id: entryId, display_name: infoState.title || "详情",
+        error: data.detail || `HTTP ${resp.status}`, models: infoState.models,
+        plan_name: infoState.planName, plan_name_source: infoState.planSource,
+        fetched_at: infoState.fetchedAt });
+      return;
+    }
+    infoState.fetchedAt = data.fetched_at;
+    infoState.title = data.display_name;
+    renderInfoModal(data);
+  } catch (e) {
+    renderInfoModal({ entry_id: entryId, display_name: infoState.title || "详情",
+      error: e.message, models: infoState.models,
+      plan_name: infoState.planName, plan_name_source: infoState.planSource });
+  } finally {
+    refreshBtn.disabled = false;
+    refreshBtn.textContent = "刷新 ↻";
+  }
+}
+
+function openInfoModal(entryId, displayName) {
+  infoState.title = displayName || "详情";
+  infoState.fetchedAt = null;
+  infoState.models = [];
+  infoState.planName = null;
+  infoState.planSource = "none";
+  // 先渲染占位骨架（后端首查可能慢），再异步填充
+  renderInfoModal({ entry_id: entryId, display_name: infoState.title, models: [],
+    plan_name: null, plan_name_source: "none", fetched_at: null });
+  const dlg = document.getElementById("info-dialog");
+  if (!dlg.open) dlg.showModal();
+  fetchInfo(entryId, false);
+}
+
+function bindInfoEvents() {
+  // 卡片"详情"按钮：事件委托挂在 grid 上（DOM 随轮询重建，委托只需一次）
+  document.getElementById("grid").addEventListener("click", ev => {
+    const btn = ev.target.closest(".detail-btn");
+    if (!btn) return;
+    ev.preventDefault();
+    openInfoModal(btn.dataset.entryId,
+      btn.closest(".card")?.querySelector(".card-title")?.textContent);
+  });
+  const dlg = document.getElementById("info-dialog");
+  document.getElementById("btn-info-refresh").addEventListener("click", () => {
+    if (infoState.entryId) fetchInfo(infoState.entryId, true);
+  });
+  document.getElementById("btn-info-close").addEventListener("click", () => dlg.close());
+  document.getElementById("btn-info-close-x").addEventListener("click", () => dlg.close());
+  document.getElementById("info-search").addEventListener("input", renderModelList);
+  // Esc / 点击遮罩关闭（cancel 事件覆盖 Esc；点击 backdrop 关闭需判坐标）
+  dlg.addEventListener("cancel", ev => ev.preventDefault());   // 防误触 Esc 丢查询结果
+  dlg.addEventListener("click", ev => { if (ev.target === dlg) dlg.close(); });
 }
 
 // ---------- 数据加载 ----------
@@ -293,6 +845,7 @@ async function loadPlans() {
   try {
     const resp = await fetch(API.plans());
     const data = await resp.json();
+    if (dragSorter.isActive()) return;   // 拖拽进行中：跳过本轮渲染，避免 DOM 被重建打断
     renderPlans(data.plans || []);
     if (data.generated_at) {
       document.getElementById("updated-at").textContent =
@@ -311,7 +864,10 @@ function renderPlans(plans) {
       点击右上角「⚙ 配置」添加条目</div>`;
     return;
   }
-  grid.innerHTML = plans.map(cardHTML).join("");
+  // 按用户排序重排卡片顺序（localStorage 优先，新条目追加，已删除条目剔除）
+  const ordered = dragSorter.applyOrder(plans);
+  grid.innerHTML = ordered.map(cardHTML).join("");
+  dragSorter.bind(grid);
 }
 
 async function manualRefresh(btn) {
@@ -509,6 +1065,7 @@ document.getElementById("btn-add-entry").addEventListener("click", addEntry);
 document.getElementById("btn-save-cfg").addEventListener("click", saveConfig);
 document.getElementById("btn-cancel-cfg").addEventListener("click", () =>
   document.getElementById("cfg-dialog").close());
+bindInfoEvents();
 
 loadPlans();
 setInterval(loadPlans, 60 * 1000);   // 前端每分钟轮询；后端另有 30 分钟定时拉取厂商接口

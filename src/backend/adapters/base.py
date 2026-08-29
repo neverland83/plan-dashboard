@@ -32,6 +32,7 @@ class BaseAdapter(ABC):
     display_name: str = "未命名"
     needs_key: bool = True          # 是否必须 API Key 才能查询
     kind: str = "windows"           # "windows" | "balance"
+    supports_models: bool = True    # 是否有模型列表查询能力（manual 为 False；仅详情弹框用）
 
     @abstractmethod
     def _fetch(self, api_key: str, extra: dict, usage: PlanUsage) -> PlanUsage:
@@ -68,7 +69,60 @@ class BaseAdapter(ABC):
             logger.warning("adapter %s entry=%s failed: %s", self.provider_id, entry_id, usage.error)
             return usage
 
+    # ---- 卡片详情扩展（brief 2026-08-29：Model Info + Plan 档级缓存） ------
+    def fetch_models(self, api_key: str, extra: dict) -> list[str]:
+        """返回该 provider 支持的模型 id 列表（详情弹框用）。
+
+        返回 [] 表示不支持查询（如手动型）或查询失败。
+        与 fetch 同契约：**适配器不应抛异常**；失败请 return []。
+        """
+        return []
+
+    def fetch_plan_name(self, api_key: str, extra: dict) -> str | None:
+        """返回当前购买的 Plan 档级名（如 'GLM Coding Lite'），无法判定返回 None。
+
+        与 fetch 同契约：**适配器不应抛异常**；失败请 return None。
+        None 时由路由层按「adapter → config.json 手填 → 按量/未知」三层回退。
+        """
+        return None
+
     # ---- 共用小工具 -------------------------------------------------------
+    def _fetch_models_openai_compat(self, url: str, api_key: str) -> list[str]:
+        """GET OpenAI 兼容 /models 并提取模型 id 列表（去重 + 稳定排序）。
+
+        各家（智谱/MiniMax/DeepSeek/Kimi/StepFun/百炼兼容模式）的模型列表
+        端点均为 `Authorization: Bearer <key>` + `{"data": [{"id": ...}]}` 结构，
+        统一走这里，失败（网络/HTTP>=400/非 JSON/结构异常）一律返回 []。
+        """
+        headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+        try:
+            with httpx.Client(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+                resp = client.get(url, headers=headers)
+        except Exception as exc:  # noqa: BLE001 —— 契约要求绝不抛异常
+            logger.warning("fetch_models %s failed: %s", url, exc)
+            return []
+        if resp.status_code >= 400:
+            logger.warning("fetch_models %s: HTTP %s", url, resp.status_code)
+            return []
+        try:
+            body = resp.json()
+        except ValueError:
+            return []
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, list):
+            return []
+        ids: list[str] = []
+        for item in data:
+            if isinstance(item, dict):
+                mid = item.get("id")
+            elif isinstance(item, str):
+                mid = item
+            else:
+                continue
+            if isinstance(mid, str) and mid.strip():
+                ids.append(mid.strip())
+        return sorted(set(ids))
+
     @staticmethod
     def _http_get(
         url: str,

@@ -23,6 +23,7 @@ from ..models import PlanUsage, UsageWindow
 
 HOST = "https://api.stepfun.com"
 ACCOUNT_PATH = "/v1/accounts"
+MODELS_PATH = "/v1/models"          # OpenAI 兼容 List Models
 
 
 class StepFunAdapter(BaseAdapter):
@@ -68,6 +69,14 @@ class StepFunAdapter(BaseAdapter):
         if not usage.windows:
             usage.plan_name = "Step Plan（控制台查看）"
         return usage
+
+    # ---- 卡片详情扩展 -----------------------------------------------------
+    def fetch_models(self, api_key: str, extra: dict) -> list[str]:
+        """GET {host}/v1/models（OpenAI 兼容 List Models）。失败返回 []。"""
+        host = (extra.get("host") or HOST).rstrip("/")
+        return self._fetch_models_openai_compat(f"{host}{MODELS_PATH}", api_key)
+
+    # fetch_plan_name：Step Plan 月池/加油包官方无查询 API → 继承基类返回 None
 
     @classmethod
     def _merge_manual_windows(cls, usage: PlanUsage, manual_windows) -> None:

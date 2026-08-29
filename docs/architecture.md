@@ -15,6 +15,8 @@
 │  ├─ GET  /api/config      读取配置        │
 │  ├─ POST /api/config      保存配置        │
 │  ├─ GET  /api/providers   可用厂商列表    │
+│  ├─ GET  /api/plans/{id}/info    卡片详情 │
+│  ├─ POST /api/plans/{id}/refresh-info 详情强刷 │
 │  └─ 定时轮询（30 分钟，可配）             │
 └──────────────────┬──────────────────────┘
                    │ adapter 调用
@@ -56,10 +58,23 @@ def fetch(api_key: str, config: dict) -> PlanUsage:
     """查询该厂商套餐用量。config 为该条目额外配置（如地域）。"""
 ```
 
+**卡片详情扩展（2026-08-29，ADR-0004）** —— 基类提供 2 个可选方法，子类按需覆盖：
+
+```python
+def fetch_models(self, api_key: str, extra: dict) -> list[str]:
+    """返回该 provider 支持的模型 id 列表。返回 [] 表示不支持查询（如手动/异常）。"""
+
+def fetch_plan_name(self, api_key: str, extra: dict) -> str | None:
+    """返回当前购买的 Plan 档级名（如 'GLM Coding Lite'），无法判定返回 None。"""
+```
+
 **约定**：
 - `percentage` 统一为**已用百分比**（0-100），前端计算剩余 = 100 - percentage（与智谱接口返回一致）
 - 纯余额型厂商（DeepSeek/Kimi）：windows 为空，用 `balance` 字段（见下）
 - 适配器不得抛异常，必须返回带 error 的 PlanUsage（前端展示失败状态）
+- `fetch_models` / `fetch_plan_name` 同样**不得抛异常**：失败分别返回 `[]` / `None`
+- plan_name 由路由层三层回退：adapter → config.json `plan_name` 手填 → 前端「按量调用/未知档级」
+- 详情数据缓存在 `data/model_cache.json`（`src/backend/model_cache.py`），首查→缓存→手动刷新
 
 ## 数据模型（config.json）
 

@@ -245,6 +245,14 @@ class ArkAdapter(BaseAdapter):
         return f"无有效套餐（Status: {status}）"
 
     # ---- 解析 -------------------------------------------------------------
+    def _afp_plan_quota_map(self, result: dict) -> dict:
+        """提取 GetAFPUsage.Result.PlanNameToPurchaseQuotaMap（档级名 → 购买配额）。
+
+        字段在官方响应中可能缺失或结构变化 → 统一返回 dict（可能为空）。
+        """
+        raw = result.get("PlanNameToPurchaseQuotaMap")
+        return raw if isinstance(raw, dict) else {}
+
     def _parse_afp_tiers(self, result: dict) -> list[UsageWindow]:
         """GetAFPUsage：AFPFiveHour/AFPWeekly/AFPMonthly，Quota<=0 视为未订阅跳过。"""
         tiers: list[UsageWindow] = []
@@ -325,3 +333,117 @@ class ArkAdapter(BaseAdapter):
         if n < 1_000_000_000_000:
             n *= 1000
         return datetime.fromtimestamp(n / 1000.0, tz=timezone.utc).isoformat(timespec="seconds")
+
+    # ---- 卡片详情扩展 -----------------------------------------------------
+    def _credentials(self, api_key: str, extra: dict) -> tuple[str, str] | None:
+        """从 extra/api_key 提取 AK/SK；缺失返回 None（调用方报错态）。"""
+        access_key = (extra.get("access_key") or api_key or "").strip()
+        secret_key = (extra.get("secret_key") or "").strip()
+        return (access_key, secret_key) if access_key and secret_key else None
+
+    def fetch_models(self, api_key: str, extra: dict) -> list[str]:
+        """管控面 ListFoundationModels（V4 签名，同 GetAFPUsage 认证）。
+
+        响应 Result.Models[]（别名 Items/Data）取 ModelName 字段；
+        失败（凭证缺失/网络/HTTP 错误）返回 []。
+        """
+        creds = self._credentials(api_key, extra)
+        if creds is None:
+            return []
+        access_key, secret_key = creds
+        region = str(extra.get("region") or REGION_DEFAULT).strip() or REGION_DEFAULT
+        try:
+            resp = self._call(access_key, secret_key, region, "ListFoundationModels")
+        except Exception:  # noqa: BLE001 —— 契约要求绝不抛异常
+            return []
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            return []
+        # 不复用 _handle_error（会把 error 写进 usage），这里静默失败返回 []
+        if not isinstance(body, dict):
+            return []
+        meta = body.get("ResponseMetadata")
+        err = meta.get("Error") if isinstance(meta, dict) else None
+        if resp.status_code >= 400 or isinstance(err, dict):
+            return []
+        result = body.get("Result")
+        result = result if isinstance(result, dict) else {}
+        items: list = []
+        for key in ("Models", "Items", "Data", "List"):
+            candidate = result.get(key)
+            if isinstance(candidate, list):
+                items = candidate
+                break
+        ids: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("ModelName") or item.get("Name") or item.get("Model")
+            if isinstance(name, str) and name.strip():
+                ids.append(name.strip())
+        return sorted(set(ids))
+
+    def fetch_plan_name(self, api_key: str, extra: dict) -> str | None:
+        """GetAFPUsage 响应内的档级信息 → 'Agent Plan <档级>'。
+
+        三层来源（brief 指定，取先命中者）：
+        1. Result.PlanType（当前档级，如 'Pro'）
+        2. PlanNameToPurchaseQuotaMap 里配额最大的一档
+        失败返回 None，交给 config 手填回退。
+        """
+        creds = self._credentials(api_key, extra)
+        if creds is None:
+            return None
+        access_key, secret_key = creds
+        region = str(extra.get("region") or REGION_DEFAULT).strip() or REGION_DEFAULT
+        try:
+            resp = self._call(access_key, secret_key, region, "GetAFPUsage")
+        except Exception:  # noqa: BLE001 —— 契约要求绝不抛异常
+            return None
+        try:
+            body = resp.json() or {}
+        except ValueError:
+            return None
+        if not isinstance(body, dict):
+            return None
+        code, _msg = _parse_error(body)
+        if resp.status_code >= 400 or (code is not None and code in _AUTH_ERROR_CODES):
+            return None
+        result = body.get("Result")
+        result = result if isinstance(result, dict) else {}
+
+        plan_type = str(result.get("PlanType") or "").strip()
+        if plan_type:
+            return f"Agent Plan {plan_type}"
+
+        quota_map = self._afp_plan_quota_map(result)
+        best_name, best_quota = None, 0.0
+        for name, quota in quota_map.items():
+            q = self._to_float(quota)
+            if q is None or q <= 0:
+                continue                       # 配额非法/非正数的档级不采信
+            if q > best_quota:
+                best_name, best_quota = str(name), q
+        if best_name:
+            return f"Agent Plan {best_name}"
+
+        # AFP 无档级 → 探测 Coding Plan（订阅型，有 Status=Active 即算一档）
+        try:
+            resp2 = self._call(access_key, secret_key, region, "GetCodingPlanUsage")
+        except Exception:  # noqa: BLE001
+            return None
+        try:
+            body2 = resp2.json() or {}
+        except ValueError:
+            return None
+        if not isinstance(body2, dict):
+            return None
+        code2, _ = _parse_error(body2)
+        if resp2.status_code >= 400 or (code2 is not None and code2 in _AUTH_ERROR_CODES):
+            return None
+        result2 = body2.get("Result")
+        result2 = result2 if isinstance(result2, dict) else {}
+        if str(result2.get("Status") or "").strip().lower() in ("active", "ok", "running"):
+            return "Coding Plan"
+        return None
