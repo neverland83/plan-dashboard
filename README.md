@@ -1,15 +1,47 @@
 # Plan Dashboard - MaaS 套餐用量看板
 
-> 多模型服务商 Coding Plan / Token Plan 套餐余量统一看板。
+> 多模型服务商 Coding Plan / Token Plan 套餐用量统一看板。
 > 支持在本地 Web 页面配置各家 MaaS 的 API Key，以卡片形式直观展示各套餐限时周期的剩余百分比（类似 CC Switch 的用量显示）。
+
+<p align="center">
+  <img src="docs/screenshots/01-card-grid.png" alt="6 家 MaaS 用量卡片：百分比环图 + 重置倒计时">
+</p>
+
+<p align="center">
+  <a href="#效果截图">⬇️ 详情弹框 · 配置弹框 · 更多效果</a>
+</p>
+
+## 效果截图
+
+### 卡片详情弹框（Plan 档级 + 模型列表 + 手动刷新）
+
+点击卡片右下角「☰ 详情」弹出只读弹框：
+
+<p align="center">
+  <img src="docs/screenshots/02-detail-modal.png" alt="卡片详情弹框：当前套餐档级 + 该厂商支持的模型列表 + 手动刷新按钮">
+</p>
+
+- **当前套餐档级**（plan_name），按三层回退取值：adapter 自报 → config.json 手填 → 「按量调用 / 未知档级」；档级旁的徽标标注来源（`来自 adapter` / `手动配置`）
+- **该厂商支持的模型列表**，支持按模型名 / ID 过滤搜索 + 滚动浏览
+- **上次刷新时间** + 弹框内「刷新 ↻」按钮（忽略缓存强制重查）
+
+### 配置弹框（Provider 增删改 + 启用开关）
+
+<p align="center">
+  <img src="docs/screenshots/03-config-dialog.png" alt="Provider 条目配置面板：增删改 + 启用开关 + API Key 不回显">
+</p>
+
+也可以在启动后从前端「⚙ 配置」面板里增删改条目——面板不回显已保存的 API Key。
+
+> 💡 缓存策略：弹框首次打开会查询一次厂商接口并把结果写入 `data/model_cache.json`（运行时产物，已在 `.gitignore` 中排除）；之后每次打开直接读缓存，不再发请求。需要最新数据时点弹框内「刷新 ↻」。
 
 ## 当前状态
 
-- **一期（进行中）**：6 家已确认接口的厂商接入（智谱 / Z.ai / MiniMax / DeepSeek / Kimi / 火山方舟）+ 手动录入兜底
-- **二期（规划）**：阿里百炼 / 腾讯云 / 百度千帆 / StepFun 探索接入
-- **三期+（规划）**：余量告警、历史趋势、多 Key 对比、与 OpenClaw 集成
+- **v0.2.0（已发布）**：卡片详情弹框（Plan 档级 + 模型列表 + 手动刷新）+ 二期适配器接入（StepFun / 阿里云百炼 / 火山方舟自动探测已有 Plan）
+- **v0.1.0（已发布）**：6 家已确认接口厂商接入（智谱 / Z.ai / MiniMax / DeepSeek / Kimi / 火山方舟）+ 手动录入兜底
+- **v0.3.0+（规划）**：余量告警、历史趋势、多 Key 对比、与 OpenClaw 集成
 
-详情见 [`docs/roadmap.md`](docs/roadmap.md)
+详情见 [`docs/roadmap.md`](docs/roadmap.md) 与 [`docs/changelog.md`](docs/changelog.md)
 
 ## 快速开始
 
@@ -38,8 +70,6 @@ notepad config.json
 - 可选：条目里加 `"plan_name": "..."` 手填套餐档级名（详情弹框在 adapter 无法自报档级时展示它）
 - 不想启用的条目设 `"enabled": false`
 
-也可以启动后在前端「⚙ 配置」面板里增删改条目（面板不回显已保存的 Key）。
-
 ### 3. 启动服务
 
 ```powershell
@@ -53,21 +83,9 @@ python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8712
 ### 4. 使用
 
 - 卡片显示每个厂商的各窗口剩余百分比（环形图：绿 >50% / 黄 20–50% / 红 <20%）+ 重置倒计时
-- 余额型厂商（DeepSeek/Kimi）显示余额金额与可用状态；手动型卡片带「手动」标记
-- 卡片右下角「☰ 详情」打开卡片详情弹框（见下节）
+- 余额型厂商（DeepSeek / Kimi）显示余额金额与可用状态；手动型卡片带「手动」标记
+- 卡片右下角「☰ 详情」打开卡片详情弹框（见「效果截图」章）
 - 右上角「↻ 刷新」立即重新拉取；后端每 `refresh_interval_minutes`（默认 30 分钟）自动拉取，前端每分钟轮询展示层
-
-### 卡片详情（Plan 档级 + 模型列表）
-
-点击卡片右下角「☰ 详情」弹出只读弹框：
-
-- **当前套餐档级**（plan_name），按三层回退取值：adapter 自报 → config.json 手填 → 「按量调用 / 未知档级」；档级旁的徽标标注来源（`来自 adapter` / `手动配置`）
-- **该厂商支持的模型列表**，支持按模型名/ID 过滤搜索 + 滚动浏览
-- **上次刷新时间** + 弹框内「刷新 ↻」按钮（忽略缓存强制重查）
-
-缓存策略（**首查 → 缓存 → 手动刷新**）：首次打开弹框会查询一次厂商接口并把结果写入 `data/model_cache.json`；之后每次打开直接读缓存，不再发请求；需要最新数据时点弹框内「刷新」按钮。模型/档级缓存是运行时产物，已在 `.gitignore` 中排除。
-
-> 注：Step Plan（月池/加油包）官方无用量查询 API，StepFun 详情只有模型列表；DeepSeek/Kimi 按量计费无套餐档级，plan_name 显示「按量调用」。
 
 ### API 一览
 
@@ -110,4 +128,4 @@ python -m pytest src/tests
 4. **调研资产先归档再开发**：社区方案（CC Switch extractor 等）都记录在案
 
 ---
-FrankMei (neverland_83@163.com) · 2026-08-27
+FrankMei (neverland_83@163.com) · 2026-08-29
