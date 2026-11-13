@@ -80,6 +80,11 @@ class Element {
     this._listeners[type] = (this._listeners[type] || []).filter(f => f !== fn);
   }
 
+  // <dialog> 最小行为：详情弹框/配置弹框都会调 showModal()/close()/读 open
+  showModal() { this._open = true; }
+  close() { this._open = false; }
+  get open() { return !!this._open; }
+
   matches(sel) {
     if (sel.startsWith(".")) return this.classList.contains(sel.slice(1));
     if (sel.startsWith("#")) return this.id === sel.slice(1);
@@ -251,7 +256,12 @@ function makeEnv({ storage } = {}) {
     },
   };
   for (const id of ["grid", "updated-at", "drag-live", "btn-refresh", "btn-config",
-    "btn-add-entry", "btn-save-cfg", "btn-cancel-cfg", "cfg-dialog", "entries", "interval"]) {
+    "btn-add-entry", "btn-save-cfg", "btn-cancel-cfg", "cfg-dialog", "entries", "interval",
+    // 卡片详情弹框（v0.2）：bindInfoEvents() 逐个 getElementById，
+    // 少一个就是 "Cannot read properties of null (reading 'addEventListener')"
+    "info-dialog", "btn-info-refresh", "btn-info-close", "btn-info-close-x",
+    "info-search", "info-title", "info-plan", "info-plan-source", "info-fetched-at",
+    "info-err", "info-count", "info-model-list"]) {
     const el = new Element("div");
     el.setAttribute("id", id);
     document._ids.set(id, el);
@@ -321,7 +331,18 @@ async function main() {
   const { document, window, dispatch, winListeners } = makeEnv({ storage });
 
   const plansData = () => ({ ok: true, generated_at: "2026-08-28T10:00:00+00:00", plans: makePlans(PLAN_IDS) });
-  const fetchStub = async () => ({ ok: true, json: async () => plansData() });
+  // /api/plans/{id}/info 与 /api/plans 共用 stub：按 URL 区分，详情弹框才拿得到数据
+  const infoData = () => ({
+    ok: true, entry_id: PLAN_IDS[0], display_name: PLAN_IDS[0].toUpperCase(),
+    fetched_at: "2026-08-28T10:00:00+00:00", plan_name: "GLM Coding Lite",
+    plan_name_source: "adapter",
+    models: [{ id: "glm-4.7", owned_by: "zhipu" }, { id: "glm-4.6", owned_by: "zhipu" }],
+    error: null,
+  });
+  const fetchStub = async (url) => ({
+    ok: true,
+    json: async () => (String(url ?? "").includes("/info") ? infoData() : plansData()),
+  });
 
   // 暴露测试钩子后执行真实前端脚本
   const code = script + "\n;globalThis.__t = { loadPlans, dragSorter, OrderStore, renderPlans };";
@@ -478,6 +499,30 @@ async function main() {
   dispatch(window, "pointerup");
   check("顺序未变", JSON.stringify(domOrder(document)) === JSON.stringify(before));
   check("存储未变", JSON.stringify(storedOrder(storage)) === JSON.stringify(before));
+
+  console.log("\n[11] 卡片详情弹框：点击「☰ 详情」→ dialog 打开并渲染档级/模型");
+  layout(grid);
+  const firstId = domOrder(document)[0];
+  const cardEl = grid.querySelector(`[data-entry-id="${firstId}"]`);
+  const detailBtn = cardEl.querySelector(".detail-btn");
+  check("卡片内有详情按钮", !!detailBtn);
+  dispatch(detailBtn, "click");
+  const infoDlg = document.getElementById("info-dialog");
+  check("点击后详情 dialog 打开（showModal）", infoDlg.open === true);
+  await sleep(20);
+  check("档级渲染（来自 adapter）",
+    document.getElementById("info-plan").textContent.includes("GLM Coding Lite"),
+    document.getElementById("info-plan").textContent);
+  check("档级来源徽标 = 来自 adapter",
+    document.getElementById("info-plan-source").textContent === "来自 adapter",
+    document.getElementById("info-plan-source").textContent);
+  check("模型总数写入 info-count",
+    document.getElementById("info-count").textContent.includes("2"),
+    document.getElementById("info-count").textContent);
+  check("模型清单渲染 2 行",
+    document.getElementById("info-model-list").querySelectorAll(".model-row").length === 2);
+  dispatch(document.getElementById("btn-info-close"), "click");
+  check("关闭按钮生效（close）", infoDlg.open === false);
 
   console.log(`\n===== 结果：${passed} 通过，${failures.length} 失败 =====`);
   if (failures.length) { console.error("失败项：", failures); process.exit(1); }
