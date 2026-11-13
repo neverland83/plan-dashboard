@@ -201,8 +201,9 @@ def _gather_info(entry: dict, cached: dict | None) -> dict:
             fetched_at=fetched_at,
         )
 
-    if adapter.needs_key and not api_key:
-        # 无 key：不请求；保留旧缓存的 models，plan_name 走 config 手填 → 旧缓存
+    config_error = adapter.config_error(api_key, extra)
+    if config_error:
+        # 无有效凭证：不请求；保留旧缓存的 models，plan_name 走 config 手填 → 旧缓存
         kept_ids = [
             str(m.get("id")) for m in ((cached or {}).get("models") or [])
             if isinstance(m, dict) and m.get("id")
@@ -210,7 +211,7 @@ def _gather_info(entry: dict, cached: dict | None) -> dict:
         plan_name, source = _resolve_plan_name_plan_only(entry, cached)
         return build_cache_entry(
             kept_ids, plan_name, source, owned_by=ptype,
-            error="缺少 API Key（请在配置面板填写）",
+            error=config_error,
             fetched_at=fetched_at,
         )
 

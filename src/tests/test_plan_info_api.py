@@ -225,6 +225,18 @@ class TestErrorStates:
         assert "未知厂商类型" in data["error"]
         assert data["models"] == []
 
+    def test_ark_missing_credentials_message_points_to_iam(self, client):
+        """ark 凭证填在 extra：文案要指向 IAM AK/SK，而不是「模型列表查询失败」。"""
+        tc, _, _ = client
+        import backend.config as cfg_mod
+        write_config(cfg_mod.CONFIG_PATH, [
+            {"id": "ark", "name": "方舟", "type": "ark", "api_key": "",
+             "extra": {}, "enabled": True},
+        ])
+        data = tc.get("/api/plans/ark/info").json()
+        assert "凭证" in data["error"] and "IAM" in data["error"]
+        assert "模型列表查询失败" not in data["error"]
+
     def test_manual_entry_reports_empty_models(self, client):
         """手动型条目：详情可用但无模型数据（不报错）。"""
         tc, _, _ = client

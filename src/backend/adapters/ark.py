@@ -141,6 +141,20 @@ def _parse_error(body: dict) -> tuple[str | None, str | None]:
 class ArkAdapter(BaseAdapter):
     provider_id = "ark"
     display_name = "火山方舟"
+    # 凭证是账号级 IAM AK/SK（可能只填在 extra 里），不是 API Key ——
+    # 交给 config_error 判定，否则基类会先按「缺少 API Key」误拦截。
+    needs_key = False
+
+    def config_error(self, api_key: str, extra: dict) -> str | None:
+        """凭证缺失文案：明确区分 IAM AK/SK 与 ark- 推理 Key。"""
+        access_key = (extra.get("access_key") or api_key or "").strip()
+        secret_key = (extra.get("secret_key") or "").strip()
+        if not access_key or not secret_key:
+            return (
+                "缺少账号级凭证：需要 IAM AccessKey/SecretKey"
+                "（ark- 开头的是推理 API Key，不可用于套餐查询）"
+            )
+        return None
 
     def _call(self, access_key: str, secret_key: str, region: str, action: str) -> httpx.Response:
         now = datetime.now(timezone.utc)
@@ -153,14 +167,12 @@ class ArkAdapter(BaseAdapter):
             return client.post(url, headers=headers, content=b"")
 
     def _fetch(self, api_key: str, extra: dict, usage: PlanUsage) -> PlanUsage:
+        # fetch() 已用 config_error 拦截；这里保留兜底，防止子类/直调路径漏检
+        missing = self.config_error(api_key, extra)
+        if missing:
+            return self._fail(usage, missing)
         access_key = (extra.get("access_key") or api_key or "").strip()
         secret_key = (extra.get("secret_key") or "").strip()
-        if not access_key or not secret_key:
-            return self._fail(
-                usage,
-                "缺少账号级凭证：需要 IAM AccessKey/SecretKey"
-                "（ark- 开头的是推理 API Key，不可用于套餐查询）",
-            )
 
         region = str(extra.get("region") or REGION_DEFAULT).strip() or REGION_DEFAULT
 

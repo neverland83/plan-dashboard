@@ -42,6 +42,21 @@ class BaseAdapter(ABC):
         子类填充 windows/balance/raw/error 后返回。extra 为该条目的额外配置。
         """
 
+    # ---- 配置缺失探针 -----------------------------------------------------
+    def config_error(self, api_key: str, extra: dict) -> str | None:
+        """返回阻塞性配置缺失文案；None 表示凭证齐全、可以发请求。
+
+        默认实现只认 `needs_key` + `api_key`。凭证形态不同的适配器（如 ark 用
+        账号级 AK/SK 而非 API Key）应覆盖本方法，并把 `needs_key` 设为 False，
+        否则基类会先按「缺少 API Key」拦截，用户填了正确凭证也走不到请求。
+
+        `fetch()`（看板卡片）与 `_gather_info()`（卡片详情）都走这里，
+        保证两条链路对同一条目给出同一句错误文案。
+        """
+        if self.needs_key and not (api_key or "").strip():
+            return "缺少 API Key（请在配置面板填写）"
+        return None
+
     # ---- 对外入口：统一容错，绝不抛异常 ----------------------------------
     def fetch(self, entry: dict) -> PlanUsage:
         entry_id = entry.get("id") or self.provider_id
@@ -57,9 +72,10 @@ class BaseAdapter(ABC):
             updated_at=utc_now_iso(),
         )
 
-        if self.needs_key and not api_key:
-            usage.error = "缺少 API Key（请在配置面板填写）"
-            logger.warning("adapter %s entry=%s: %s", self.provider_id, entry_id, usage.error)
+        missing = self.config_error(api_key, extra)
+        if missing:
+            usage.error = missing
+            logger.warning("adapter %s entry=%s: %s", self.provider_id, entry_id, missing)
             return usage
 
         try:

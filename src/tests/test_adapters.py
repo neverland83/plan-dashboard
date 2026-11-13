@@ -454,10 +454,28 @@ class TestArk:
         # 有 api_key 但缺 SK → 适配器报凭证缺失
         u = ArkAdapter().fetch({"id": "ark", "name": "方舟", "api_key": "AK", "extra": {}})
         assert u.error is not None and "凭证" in u.error and u.windows == []
-        # api_key 为空 → 基类先拦截（两种文案都不属于成功态）
+        # api_key 为空 → 不再被基类「缺少 API Key」误拦截，文案仍指向 IAM 凭证
         u2 = ArkAdapter().fetch({"id": "ark", "name": "方舟", "api_key": "",
                                  "extra": {"secret_key": "SK"}})
-        assert u2.error is not None and u2.windows == []
+        assert u2.error is not None and "凭证" in u2.error and u2.windows == []
+        assert "API Key（请在配置面板填写）" not in u2.error
+
+    def test_credentials_only_in_extra_still_queries(self, mock_http):
+        """回归：AK/SK 只填在 extra、api_key 留空时，仍必须真正发起请求。
+
+        旧实现 needs_key=True 会在基类按「缺少 API Key」直接返回，
+        用户即使填对了 IAM 凭证也永远看不到数据。
+        """
+        mock_http({"Action=GetAFPUsage": (200, self.AFP_OK)})
+        entry = {"id": "ark", "name": "方舟", "type": "ark", "api_key": "",
+                 "extra": {"access_key": "AKTEST", "secret_key": "SKTEST",
+                           "region": "cn-beijing"}}
+        u = ArkAdapter().fetch(entry)
+        assert u.error is None
+        assert [(w.name, w.percentage) for w in u.windows] == [
+            ("5小时", 25.0), ("周", 20.0), ("本月", 25.0),
+        ]
+        assert u.plan_name == "Agent Plan Pro"
 
     def test_field_alias_compat_coding_plan(self, mock_http):
         """_parse_coding_plan_tiers 字段兼容：Usages/别名键/绝对额度兜底。"""
